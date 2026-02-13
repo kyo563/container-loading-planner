@@ -9,6 +9,7 @@ from container_planner.models import (
     ContainerLoad,
     ContainerSpec,
     EstimateResult,
+    PackingConstraints,
     Piece,
     ValidateResult,
 )
@@ -104,9 +105,41 @@ def _bias_by_container(loads: Iterable[ContainerLoad], threshold_pct: Decimal) -
     return result
 
 
-def _pack_with_single_type(spec: ContainerSpec, pieces: list[Piece]) -> tuple[list[ContainerLoad], list[Piece]]:
-    result = pack_pieces(spec, pieces)
+def _pack_with_single_type(
+    spec: ContainerSpec,
+    pieces: list[Piece],
+    constraints: PackingConstraints | None = None,
+) -> tuple[list[ContainerLoad], list[Piece]]:
+    result = pack_pieces(spec, pieces, constraints=constraints)
     return result.loads, result.unplaced
+
+
+def _pack_with_multi_type(
+    specs: list[ContainerSpec],
+    pieces: list[Piece],
+    mode: str,
+    constraints: PackingConstraints | None = None,
+) -> tuple[list[ContainerLoad], list[Piece]]:
+    remaining = list(pieces)
+    loads: list[ContainerLoad] = []
+    while remaining:
+        best = None
+        for spec in specs:
+            result = pack_pieces(spec, remaining, max_containers=1, constraints=constraints)
+            placed_count = len(result.loads[0].placements) if result.loads else 0
+            if placed_count == 0:
+                continue
+            score = Decimal("1") if mode == "MIN_CONTAINERS" else (spec.cost or Decimal("0"))
+            efficiency = score / Decimal(str(placed_count))
+            if best is None or efficiency < best[0]:
+                best = (efficiency, result)
+        if best is None:
+            break
+        chosen = best[1]
+        loads.extend(chosen.loads)
+        placed_piece_ids = {pl.piece.piece_id for load in chosen.loads for pl in load.placements}
+        remaining = [piece for piece in remaining if piece.piece_id not in placed_piece_ids]
+    return loads, remaining
 
 
 def estimate(
@@ -116,6 +149,7 @@ def estimate(
     threshold_pct: Decimal,
     mode: str,
     algorithm: str,
+    constraints: PackingConstraints | None = None,
 ) -> EstimateResult:
     oog_results = []
     in_gauge: list[Piece] = []
@@ -127,14 +161,17 @@ def estimate(
             in_gauge.append(piece)
     in_gauge = sort_pieces(in_gauge)
     best = None
-    for spec in standard_specs:
-        loads, unplaced = _pack_with_single_type(spec, in_gauge)
-        count = len(loads)
-        cost = (spec.cost or Decimal("0")) * count
-        score = count if mode == "MIN_CONTAINERS" else cost
-        if best is None or score < best[0]:
-            best = (score, loads, unplaced)
-    _, loads, unplaced = best
+    if algorithm == "MULTI_TYPE":
+        loads, unplaced = _pack_with_multi_type(standard_specs, in_gauge, mode, constraints=constraints)
+    else:
+        for spec in standard_specs:
+            loads, unplaced = _pack_with_single_type(spec, in_gauge, constraints=constraints)
+            count = len(loads)
+            cost = (spec.cost or Decimal("0")) * count
+            score = count if mode == "MIN_CONTAINERS" else cost
+            if best is None or score < best[0]:
+                best = (score, loads, unplaced)
+        _, loads, unplaced = best
     placements = [placement for load in loads for placement in load.placements]
     summary = Counter([load.spec.type for load in loads])
     bias = _bias_by_container(loads, threshold_pct)
@@ -153,9 +190,10 @@ def validate(
     count: int,
     threshold_pct: Decimal,
     ref_spec: ContainerSpec,
+    constraints: PackingConstraints | None = None,
 ) -> ValidateResult:
     in_gauge = sort_pieces(pieces)
-    pack_result = pack_pieces(spec, in_gauge, max_containers=count)
+    pack_result = pack_pieces(spec, in_gauge, max_containers=count, constraints=constraints)
     placements = [placement for load in pack_result.loads for placement in load.placements]
     bias = _bias_by_container(pack_result.loads, threshold_pct)
     oog_results = [(piece, evaluate_oog(piece, ref_spec)) for piece in pieces]

@@ -17,6 +17,8 @@ class CargoRow:
     package_text: str = ""
     rotate_allowed: bool = True
     stackable: bool = True
+    max_stack_load_kg: Optional[Decimal] = None
+    incompatible_with_ids: str = ""
 
 
 @dataclass
@@ -33,6 +35,8 @@ class Piece:
     package_text: str
     rotate_allowed: bool
     stackable: bool
+    max_stack_load_kg: Optional[Decimal]
+    incompatible_with_ids: str
 
 
 @dataclass
@@ -106,6 +110,12 @@ class ContainerLoad:
 class PackResult:
     loads: List[ContainerLoad]
     unplaced: List[Piece]
+
+
+@dataclass
+class PackingConstraints:
+    max_cg_offset_x_pct: Optional[Decimal] = None
+    max_cg_offset_y_pct: Optional[Decimal] = None
 
 
 @dataclass
