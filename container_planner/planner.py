@@ -161,7 +161,25 @@ def estimate(
             in_gauge.append(piece)
     in_gauge = sort_pieces(in_gauge)
     best = None
-    if algorithm == "MULTI_TYPE":
+    if mode == "FIXED_PRIORITY":
+        priority_order = {"20GP": 0, "40GP": 1, "40HC": 2}
+        for spec in standard_specs:
+            loads, unplaced = _pack_with_single_type(spec, in_gauge, constraints=constraints)
+            if unplaced:
+                continue
+            count = len(loads)
+            rank = priority_order.get(spec.type, 99)
+            score = (count, rank)
+            if best is None or score < best[0]:
+                best = (score, loads, unplaced)
+        if best is None:
+            for spec in standard_specs:
+                loads, unplaced = _pack_with_single_type(spec, in_gauge, constraints=constraints)
+                score = (len(loads), priority_order.get(spec.type, 99), len(unplaced))
+                if best is None or score < best[0]:
+                    best = (score, loads, unplaced)
+        _, loads, unplaced = best
+    elif algorithm == "MULTI_TYPE":
         loads, unplaced = _pack_with_multi_type(standard_specs, in_gauge, mode, constraints=constraints)
     else:
         for spec in standard_specs:

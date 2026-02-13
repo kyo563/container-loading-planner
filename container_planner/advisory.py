@@ -24,6 +24,11 @@ def recommend_special_container(piece: Piece, oog: OogResult) -> str:
     if oog.over_W_cm > 0 or oog.over_L_cm > 0:
         return "FR"
     if oog.over_H_cm > 0:
+        if piece.weight_kg > Decimal("28000"):
+            return "FR"
+        fills_one_container = piece.L_cm >= Decimal("1100") or piece.W_cm >= Decimal("220")
+        if fills_one_container and piece.weight_kg >= Decimal("20000"):
+            return "FR"
         return "OT"
     return "20GP"
 
