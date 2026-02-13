@@ -37,7 +37,11 @@ def summarize_special_container_needs(oog_results: list[tuple[Piece, OogResult]]
     return dict(counter)
 
 
-def estimate_gross_weight_by_container(placements: list[Placement], special_counts: dict[str, int]) -> dict[str, Decimal]:
+def estimate_gross_weight_by_container(
+    placements: list[Placement],
+    special_counts: dict[str, int],
+    oog_results: list[tuple[Piece, OogResult]] | None = None,
+) -> dict[str, Decimal]:
     grouped: dict[str, Decimal] = {}
     for placement in placements:
         key = f"{placement.container_type}-{placement.container_index}"
@@ -48,11 +52,20 @@ def estimate_gross_weight_by_container(placements: list[Placement], special_coun
         ctype = key.split("-")[0]
         tare = TARE_WEIGHT_KG.get(ctype, Decimal("0"))
         result[key] = cargo_weight + tare
+    special_cargo_weights: dict[str, list[Decimal]] = {}
+    for piece, oog in oog_results or []:
+        if not oog.oog_flag:
+            continue
+        ctype = recommend_special_container(piece, oog)
+        special_cargo_weights.setdefault(ctype, []).append(piece.weight_kg)
+
     for ctype, count in special_counts.items():
         tare = TARE_WEIGHT_KG.get(ctype, Decimal("0"))
+        cargo_weights = special_cargo_weights.get(ctype, [])
         for idx in range(1, count + 1):
             key = f"{ctype}-S{idx}"
-            result[key] = tare
+            cargo_weight = cargo_weights[idx - 1] if idx <= len(cargo_weights) else Decimal("0")
+            result[key] = tare + cargo_weight
     return result
 
 
