@@ -59,14 +59,40 @@ class ShelfPacker:
             return False
         if bottom.piece.max_stack_load_kg is None:
             return True
-        return top_weight <= bottom.piece.max_stack_load_kg
+
+        existing_stack_weight = sum(
+            (
+                pl.piece.weight_kg
+                for pl in self.loads[-1].placements
+                if pl.placed_z_cm >= bottom.placed_z_cm + bottom.orient_H_cm and self._overlap_2d(bottom, pl)
+            ),
+            Decimal("0"),
+        )
+        return existing_stack_weight + top_weight <= bottom.piece.max_stack_load_kg
+
+    @staticmethod
+    def _parse_incompatible_ids(raw_ids: str) -> set[str]:
+        return {x.strip() for x in raw_ids.split(",") if x.strip()}
 
     def _is_incompatible(self, piece: Piece) -> bool:
-        forbidden_ids = {x.strip() for x in piece.incompatible_with_ids.split(",") if x.strip()}
-        if not forbidden_ids:
-            return False
-        current_ids = {pl.piece.orig_id for pl in self.loads[-1].placements}
-        return bool(forbidden_ids & current_ids)
+        piece_forbidden_ids = self._parse_incompatible_ids(piece.incompatible_with_ids)
+        for placed in self.loads[-1].placements:
+            if placed.piece.orig_id in piece_forbidden_ids:
+                return True
+            placed_forbidden_ids = self._parse_incompatible_ids(placed.piece.incompatible_with_ids)
+            if piece.orig_id in placed_forbidden_ids:
+                return True
+        return False
+
+    def _within_cumulative_stack_limits(self, new_placement: Placement) -> bool:
+        for placed in self.loads[-1].placements:
+            if placed.placed_z_cm >= new_placement.placed_z_cm:
+                continue
+            if not self._overlap_2d(placed, new_placement):
+                continue
+            if not self._can_stack_on_bottom(placed, new_placement.piece.weight_kg):
+                return False
+        return True
 
     def _within_cg_limit(self, orientation: Orientation, piece: Piece) -> bool:
         if self.constraints.max_cg_offset_x_pct is None and self.constraints.max_cg_offset_y_pct is None:
@@ -120,7 +146,7 @@ class ShelfPacker:
         ]
         if not bottoms:
             return False
-        return all(self._can_stack_on_bottom(bottom, piece.weight_kg) for bottom in bottoms)
+        return all(self._can_stack_on_bottom(bottom, piece.weight_kg) for bottom in bottoms) and self._within_cumulative_stack_limits(new_placement)
 
     def place_piece(self, piece: Piece) -> bool:
         for _ in range(3):
