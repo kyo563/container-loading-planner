@@ -1,0 +1,3 @@
+ItemID,CargoName,Qty,L,W,H,Gross,Style,Rotate,Stackable,MaxTopLoad,IncompatibleIDs
+A001,Machine,2,120,80,90,500,CRATE,TRUE,FALSE,,
+B010,Pump Unit,1,220,110,140,1200,PALLET,TRUE,TRUE,2000,A001

@@ -31,6 +31,53 @@ MAX_DIM_CM = Decimal("20000")
 MAX_WEIGHT_KG = Decimal("100000")
 MAX_QTY = 10000
 
+COLUMN_ALIASES = {
+    "itemid": "id",
+    "cargoid": "id",
+    "cargo_id": "id",
+    "cargoname": "desc",
+    "name": "desc",
+    "qty": "qty",
+    "quantity": "qty",
+    "l": "L_cm",
+    "length": "L_cm",
+    "w": "W_cm",
+    "width": "W_cm",
+    "h": "H_cm",
+    "height": "H_cm",
+    "gross": "weight_kg",
+    "grosskg": "weight_kg",
+    "weight": "weight_kg",
+    "weightkg": "weight_kg",
+    "style": "package_text",
+    "package": "package_text",
+    "package_text": "package_text",
+    "rotate": "rotate_allowed",
+    "rotateallowed": "rotate_allowed",
+    "stack": "stackable",
+    "stackable": "stackable",
+    "maxtopload": "max_stack_load_kg",
+    "maxstackload": "max_stack_load_kg",
+    "incompatibleids": "incompatible_with_ids",
+    "incompatible": "incompatible_with_ids",
+}
+
+
+def _normalize_column_name(name: str) -> str:
+    return "".join(ch for ch in str(name).strip() if ch.isalnum()).lower()
+
+
+def _apply_column_aliases(df: pd.DataFrame) -> pd.DataFrame:
+    rename_map: dict[str, str] = {}
+    for col in df.columns:
+        normalized = _normalize_column_name(col)
+        target = COLUMN_ALIASES.get(normalized)
+        if target:
+            rename_map[col] = target
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    return df
+
 
 class CargoInputError(ValueError):
     pass
@@ -51,7 +98,7 @@ def _parse_bool(value, default: bool) -> bool:
 
 def load_cargo_csv(content: str) -> pd.DataFrame:
     data = pd.read_csv(io.StringIO(content))
-    return data
+    return _apply_column_aliases(data)
 
 
 def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:

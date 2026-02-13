@@ -317,8 +317,21 @@ with main_tab:
         cargo_text = st.text_area(
             "貨物CSVテキスト貼り付け",
             height=180,
-            placeholder="id,desc,qty,L_cm,W_cm,H_cm,weight_kg,package_text,stackable,rotate_allowed\n貨物no.1,機械,1,100,80,50,500,CRATE,false,false",
+            placeholder="ItemID,CargoName,Qty,L,W,H,Gross,Style,Rotate,Stackable,MaxTopLoad,IncompatibleIDs\nA001,Machine,1,100,80,50,500,CRATE,TRUE,FALSE,,",
         )
+
+    st.caption("CSVヘッダーは簡易英語で入力できます（例: ItemID / CargoName / Qty / L / W / H / Gross / Style）。単位は L/W/H=cm、Gross=kg です。")
+    template_col1, template_col2 = st.columns(2)
+    with template_col1:
+        st.download_button(
+            "貨物CSVテンプレートをダウンロード",
+            data=_read_text("data/cargo.template.csv").encode("utf-8-sig"),
+            file_name="cargo_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with template_col2:
+        st.caption("任意列（Style/Rotate/Stackable/MaxTopLoad/IncompatibleIDs）も含むテンプレートです。")
 
     csv_col1, csv_col2 = st.columns(2)
     if csv_col1.button("サンプル貨物を読み込む", use_container_width=True):
@@ -350,13 +363,13 @@ with main_tab:
     st.subheader("貨物データのクイック追加")
     quick_col1, quick_col2, quick_col3, quick_col4 = st.columns(4)
     with quick_col1:
-        quick_id = st.text_input("アイテムID", key="quick_id", placeholder="例: A001")
+        quick_id = st.text_input("ItemID", key="quick_id", placeholder="例: A001")
     with quick_col2:
-        quick_desc = st.text_input("アイテム名", key="quick_desc", placeholder="例: 工作機械")
+        quick_desc = st.text_input("CargoName", key="quick_desc", placeholder="例: Machine")
     with quick_col3:
-        quick_package = st.text_input("荷姿テキスト", key="quick_package", placeholder="例: CRATE")
+        quick_package = st.text_input("Style", key="quick_package", placeholder="例: CRATE")
     with quick_col4:
-        quick_qty = st.number_input("数量", min_value=1, value=1, step=1, key="quick_qty")
+        quick_qty = st.number_input("Qty", min_value=1, value=1, step=1, key="quick_qty")
 
     dim_col1, dim_col2, dim_col3, dim_col4, dim_col5 = st.columns(5)
     with dim_col1:
@@ -368,26 +381,26 @@ with main_tab:
     with dim_col4:
         quick_unit = st.selectbox("単位", ["cm", "mm", "m"], key="quick_unit")
     with dim_col5:
-        quick_weight = st.number_input("重量(kg)", min_value=0.0, value=0.0, step=1.0, key="quick_weight")
+        quick_weight = st.number_input("Gross(kg)", min_value=0.0, value=0.0, step=1.0, key="quick_weight")
 
     flag_col1, flag_col2, flag_col3 = st.columns(3)
     with flag_col1:
-        quick_rotate_allowed = st.checkbox("回転可", value=True)
+        quick_rotate_allowed = st.checkbox("Rotate", value=True)
     with flag_col2:
-        quick_stackable = st.checkbox("積重ね可", value=True)
+        quick_stackable = st.checkbox("Stackable", value=True)
     with flag_col3:
-        quick_max_stack = st.number_input("最大上積荷重(kg, 任意)", min_value=0.0, value=0.0, step=1.0)
+        quick_max_stack = st.number_input("MaxTopLoad(kg, optional)", min_value=0.0, value=0.0, step=1.0)
 
     quick_incompatible = st.text_input(
-        "相性NGのID(カンマ区切り)",
+        "IncompatibleIDs (comma separated)",
         placeholder="例: B001,C002",
     )
 
     if st.button("この内容を貨物データに追加", use_container_width=True):
         if not quick_id.strip() or not quick_desc.strip():
-            st.error("アイテムIDとアイテム名は必須です。")
+            st.error("ItemID と CargoName は必須です。")
         elif min(quick_l, quick_w, quick_h, quick_weight) <= 0:
-            st.error("L/W/H と重量は 0 より大きい値を入力してください。")
+            st.error("L/W/H と Gross は 0 より大きい値を入力してください。")
         else:
             converted_l = _convert_dimension_to_cm(quick_l, quick_unit)
             converted_w = _convert_dimension_to_cm(quick_w, quick_unit)
