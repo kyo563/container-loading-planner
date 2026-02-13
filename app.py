@@ -309,6 +309,8 @@ with main_tab:
         options=["コンテナ本数が決まっている", "コンテナ本数を見積もる"],
         horizontal=True,
     )
+    execute_clicked = st.button("見積もり開始 / バンプラン実行", type="primary", use_container_width=True)
+    st.caption("上のボタンを押すと、現在のモード設定で計算を実行します。")
 
     st.subheader("パッキングリスト入力")
     cargo_col1, cargo_col2 = st.columns(2)
@@ -427,11 +429,15 @@ with main_tab:
             st.success("貨物データに追加しました。")
 
     st.subheader("貨物データ編集")
+    st.caption("行の追加/削除や数値の直接編集ができます。selected で対象行を選ぶと一括削除や mm→cm 変換が可能です。")
+    editable_df = st.session_state["cargo_df"].copy()
+    editable_df.insert(0, "selected", False)
     edited_df = st.data_editor(
-        st.session_state["cargo_df"],
+        editable_df,
         use_container_width=True,
         num_rows="dynamic",
         column_config={
+            "selected": st.column_config.CheckboxColumn("selected", help="一括操作対象として選択"),
             "id": st.column_config.TextColumn("id", help="必須: 識別ID"),
             "desc": st.column_config.TextColumn("desc", help="必須: 品名"),
             "qty": st.column_config.NumberColumn("qty", min_value=1, help="必須: 数量"),
@@ -446,7 +452,26 @@ with main_tab:
             "incompatible_with_ids": st.column_config.TextColumn("incompatible_with_ids"),
         },
     )
-    st.session_state["cargo_df"] = _normalize_cargo_dataframe(edited_df)
+
+    action_col1, action_col2 = st.columns(2)
+    with action_col1:
+        if st.button("selected 行を削除", use_container_width=True):
+            if "selected" in edited_df.columns and edited_df["selected"].any():
+                edited_df = edited_df.loc[~edited_df["selected"]].copy()
+                st.success("selected 行を削除しました。")
+            else:
+                st.warning("削除対象の行を selected してください。")
+    with action_col2:
+        if st.button("selected 行を mm→cm に変換", use_container_width=True):
+            if "selected" in edited_df.columns and edited_df["selected"].any():
+                target_mask = edited_df["selected"] == True
+                for col in ["L_cm", "W_cm", "H_cm"]:
+                    edited_df.loc[target_mask, col] = pd.to_numeric(edited_df.loc[target_mask, col], errors="coerce") / 10
+                st.success("selected 行の L/W/H を mm→cm で補正しました。")
+            else:
+                st.warning("変換対象の行を selected してください。")
+
+    st.session_state["cargo_df"] = _normalize_cargo_dataframe(edited_df.drop(columns=["selected"], errors="ignore"))
 
     cargo_df = st.session_state.get("cargo_df", _empty_cargo_df())
     if cargo_df.empty:
@@ -476,7 +501,7 @@ with main_tab:
             candidates = list(standard_specs)
         st.caption("見積り優先順位: 20GP（収まる場合）→ 40GP → 40HC。40HCを計算基準に固定。")
 
-        if st.button("必要本数を見積もる", use_container_width=True):
+        if execute_clicked:
             if not ref_spec:
                 st.error("OOG判定基準コンテナが見つかりません。")
             else:
@@ -524,7 +549,7 @@ with main_tab:
                     key=f"count_{spec.type}",
                 )
 
-        if st.button("バンプラン作成", use_container_width=True):
+        if execute_clicked:
             standard_count_specs = [(spec, int(counts_by_type.get(spec.type, 0))) for spec in standard_specs]
             standard_count_specs = [(spec, count) for spec, count in standard_count_specs if count > 0]
             if not standard_count_specs:
