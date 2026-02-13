@@ -97,6 +97,16 @@ def _parse_container_specs(containers_yaml: str):
     return specs
 
 
+def _convert_dimension_to_cm(value: float, unit: str) -> Decimal:
+    factor_map = {
+        "mm": Decimal("0.1"),
+        "cm": Decimal("1"),
+        "m": Decimal("100"),
+    }
+    factor = factor_map.get(unit, Decimal("1"))
+    return Decimal(str(value)) * factor
+
+
 with st.sidebar:
     st.header("共通設定")
     bias_threshold = st.number_input("偏荷重警告閾値(%)", min_value=0.0, max_value=100.0, value=20.0)
@@ -162,8 +172,77 @@ with input_tab:
             cargo_df = None
 
     if cargo_df is not None:
+        if submitted or "cargo_df" not in st.session_state:
+            st.session_state["cargo_df"] = cargo_df.copy()
+
         st.caption("貨物データ（この場で編集できます）")
-        cargo_df = st.data_editor(cargo_df, num_rows="dynamic")
+        st.session_state["cargo_df"] = st.data_editor(
+            st.session_state["cargo_df"],
+            num_rows="dynamic",
+            key="cargo_data_editor",
+        )
+
+        st.subheader("貨物かんたん入力フォーム（1件ずつ追加）")
+        st.caption("L/W/Hは単位を選ぶと自動でcm換算されます。")
+        id_col, desc_col, package_col = st.columns(3)
+        with id_col:
+            quick_id = st.text_input("アイテムID", key="quick_id")
+        with desc_col:
+            quick_desc = st.text_input("アイテム名", key="quick_desc")
+        with package_col:
+            quick_package = st.text_input("荷姿", key="quick_package")
+
+        l_col, w_col, h_col, unit_col = st.columns([1, 1, 1, 0.8])
+        with l_col:
+            quick_l = st.number_input("L", min_value=0.0, value=0.0, step=1.0, key="quick_l")
+        with w_col:
+            quick_w = st.number_input("W", min_value=0.0, value=0.0, step=1.0, key="quick_w")
+        with h_col:
+            quick_h = st.number_input("H", min_value=0.0, value=0.0, step=1.0, key="quick_h")
+        with unit_col:
+            quick_unit = st.selectbox("単位", options=["cm", "mm", "m"], index=0, key="quick_unit")
+
+        qty_col, weight_col, add_col = st.columns([1, 1, 1])
+        with qty_col:
+            quick_qty = st.number_input("数量", min_value=1, value=1, step=1, key="quick_qty")
+        with weight_col:
+            quick_weight = st.number_input("重量(kg)", min_value=0.0, value=0.0, step=1.0, key="quick_weight")
+        with add_col:
+            add_quick_row = st.button("この内容を貨物データに追加", use_container_width=True)
+
+        if add_quick_row:
+            if not quick_id.strip() or not quick_desc.strip():
+                st.error("アイテムIDとアイテム名は必須です。")
+            elif min(quick_l, quick_w, quick_h, quick_weight) <= 0:
+                st.error("L/W/Hと重量は0より大きい値を入力してください。")
+            else:
+                converted_l = _convert_dimension_to_cm(quick_l, quick_unit)
+                converted_w = _convert_dimension_to_cm(quick_w, quick_unit)
+                converted_h = _convert_dimension_to_cm(quick_h, quick_unit)
+                new_row = {
+                    "id": quick_id.strip(),
+                    "desc": quick_desc.strip(),
+                    "qty": int(quick_qty),
+                    "L_cm": float(converted_l),
+                    "W_cm": float(converted_w),
+                    "H_cm": float(converted_h),
+                    "weight_kg": float(quick_weight),
+                    "package_text": quick_package.strip(),
+                    "rotate_allowed": True,
+                    "stackable": True,
+                    "max_stack_load_kg": None,
+                    "incompatible_with_ids": "",
+                }
+                st.session_state["cargo_df"] = pd.concat(
+                    [st.session_state["cargo_df"], pd.DataFrame([new_row])],
+                    ignore_index=True,
+                )
+                st.success(
+                    f"{quick_id} を追加しました（{quick_unit}入力 → cm換算: "
+                    f"L={float(converted_l):.1f}, W={float(converted_w):.1f}, H={float(converted_h):.1f}）。"
+                )
+
+        cargo_df = st.session_state["cargo_df"]
 
 package_mapping = {}
 if package_file is not None:
