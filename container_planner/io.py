@@ -23,7 +23,13 @@ OPTIONAL_COLUMNS = {
     "package_text": "",
     "rotate_allowed": True,
     "stackable": True,
+    "max_stack_load_kg": None,
+    "incompatible_with_ids": "",
 }
+
+MAX_DIM_CM = Decimal("20000")
+MAX_WEIGHT_KG = Decimal("100000")
+MAX_QTY = 10000
 
 
 class CargoInputError(ValueError):
@@ -70,8 +76,24 @@ def normalize_cargo_rows(df: pd.DataFrame) -> list[CargoRow]:
             W_cm = ceil_cm(to_decimal(row["W_cm"]))
             H_cm = ceil_cm(to_decimal(row["H_cm"]))
             weight_kg = to_decimal(row["weight_kg"])
+            max_stack_load = row.get("max_stack_load_kg")
+            max_stack_load_kg = None if pd.isna(max_stack_load) or max_stack_load in {"", None} else to_decimal(max_stack_load)
         except Exception as exc:  # noqa: BLE001
             raise CargoInputError(f"寸法または重量が数値に変換できません (行 {idx + 1})") from exc
+        if qty <= 0:
+            raise CargoInputError(f"qtyは1以上である必要があります (行 {idx + 1})")
+        if qty > MAX_QTY:
+            raise CargoInputError(f"qtyが上限({MAX_QTY})を超えています (行 {idx + 1})")
+        for label, value in (("L_cm", L_cm), ("W_cm", W_cm), ("H_cm", H_cm), ("weight_kg", weight_kg)):
+            if value <= 0:
+                raise CargoInputError(f"{label}は0より大きい必要があります (行 {idx + 1})")
+        for label, value in (("L_cm", L_cm), ("W_cm", W_cm), ("H_cm", H_cm)):
+            if value > MAX_DIM_CM:
+                raise CargoInputError(f"{label}が上限({MAX_DIM_CM}cm)を超えています (行 {idx + 1})")
+        if weight_kg > MAX_WEIGHT_KG:
+            raise CargoInputError(f"weight_kgが上限({MAX_WEIGHT_KG}kg)を超えています (行 {idx + 1})")
+        if max_stack_load_kg is not None and max_stack_load_kg < 0:
+            raise CargoInputError(f"max_stack_load_kgは0以上である必要があります (行 {idx + 1})")
         cargo = CargoRow(
             id=str(row["id"]).strip(),
             desc=str(row["desc"]).strip(),
@@ -83,6 +105,8 @@ def normalize_cargo_rows(df: pd.DataFrame) -> list[CargoRow]:
             package_text=str(row.get("package_text", "") or ""),
             rotate_allowed=_parse_bool(row.get("rotate_allowed"), True),
             stackable=_parse_bool(row.get("stackable"), True),
+            max_stack_load_kg=max_stack_load_kg,
+            incompatible_with_ids=str(row.get("incompatible_with_ids", "") or ""),
         )
         rows.append(cargo)
     return rows
@@ -108,6 +132,8 @@ def expand_pieces(rows: Iterable[CargoRow]) -> list[Piece]:
                     package_text=row.package_text,
                     rotate_allowed=row.rotate_allowed,
                     stackable=row.stackable,
+                    max_stack_load_kg=row.max_stack_load_kg,
+                    incompatible_with_ids=row.incompatible_with_ids,
                 )
             )
     return pieces

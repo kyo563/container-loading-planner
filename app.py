@@ -1,8 +1,8 @@
-import io
 from decimal import Decimal
 
 import pandas as pd
 from pandas.errors import EmptyDataError
+import pydeck as pdk
 import streamlit as st
 import yaml
 
@@ -22,7 +22,7 @@ from container_planner.advisory import (
     suggest_truck_requirement,
     summarize_special_container_needs,
 )
-from container_planner.models import ContainerSpec
+from container_planner.models import ContainerSpec, PackingConstraints
 from container_planner.pdf_export import build_text_pdf
 
 st.set_page_config(page_title="コンテナ詰め算出アプリ", layout="wide")
@@ -39,6 +39,9 @@ with st.sidebar:
     st.header("共通設定")
     bias_threshold = st.number_input("偏荷重警告閾値(%)", min_value=0.0, max_value=100.0, value=20.0)
     container_order_text = st.text_input("コンテナ表示順 (カンマ区切り)", value="20GP,40GP,40HC,OT,FR,RF")
+    st.subheader("追加制約")
+    max_cg_offset_x_pct = st.number_input("重心X偏差上限(%)", min_value=0.0, max_value=100.0, value=100.0)
+    max_cg_offset_y_pct = st.number_input("重心Y偏差上限(%)", min_value=0.0, max_value=100.0, value=100.0)
 
 st.subheader("貨物データ入力")
 col1, col2 = st.columns(2)
@@ -127,12 +130,17 @@ with tab_estimate:
     st.header("① 必要本数の自動計算")
     candidate_types = st.multiselect("候補STANDARDコンテナ", options=[spec.type for spec in standard_specs])
     mode = st.selectbox("目的関数", options=["MIN_CONTAINERS", "MIN_COST"])
+    algorithm = st.selectbox("最適化アルゴリズム", options=["SINGLE_TYPE", "MULTI_TYPE"])
     if st.button("Estimate 実行"):
         if not ref_spec or not candidate_types:
             st.error("OOG判定基準と候補コンテナを選択してください")
         else:
             candidates = [spec for spec in standard_specs if spec.type in candidate_types]
-            result = estimate(pieces, candidates, ref_spec, Decimal(str(bias_threshold)), mode, "SINGLE_TYPE")
+            constraints = PackingConstraints(
+                max_cg_offset_x_pct=Decimal(str(max_cg_offset_x_pct)),
+                max_cg_offset_y_pct=Decimal(str(max_cg_offset_y_pct)),
+            )
+            result = estimate(pieces, candidates, ref_spec, Decimal(str(bias_threshold)), mode, algorithm, constraints)
             special_counts = summarize_special_container_needs(result.oog_results)
 
             st.subheader("推奨本数")
@@ -159,6 +167,62 @@ with tab_estimate:
                 file_name="placements.csv",
             )
 
+            st.subheader("積載不可貨物 (unplaced)")
+            if result.unplaced:
+                unplaced_df = pd.DataFrame(
+                    [
+                        {
+                            "piece_id": p.piece_id,
+                            "orig_id": p.orig_id,
+                            "desc": p.desc,
+                            "L_cm": p.L_cm,
+                            "W_cm": p.W_cm,
+                            "H_cm": p.H_cm,
+                            "weight_kg": p.weight_kg,
+                            "reason_hint": "寸法/重量/制約で積載不可",
+                        }
+                        for p in result.unplaced
+                    ]
+                )
+                st.dataframe(unplaced_df)
+            else:
+                st.success("積載不可貨物はありません")
+
+            if not df.empty:
+                st.subheader("2D配置ビュー（上面）")
+                view_df = df[["container_label", "cargo_piece_id", "placed_x_cm", "placed_y_cm", "placed_z_cm"]].copy()
+                st.scatter_chart(view_df, x="placed_x_cm", y="placed_y_cm", color="container_label")
+
+                st.subheader("3D配置ビュー")
+                chart_data = df[["placed_x_cm", "placed_y_cm", "placed_z_cm"]].copy()
+                chart_data["placed_x_cm"] = pd.to_numeric(chart_data["placed_x_cm"])
+                chart_data["placed_y_cm"] = pd.to_numeric(chart_data["placed_y_cm"])
+                chart_data["placed_z_cm"] = pd.to_numeric(chart_data["placed_z_cm"])
+                st.pydeck_chart(
+                    pdk.Deck(
+                        map_style=None,
+                        initial_view_state=pdk.ViewState(
+                            latitude=0,
+                            longitude=0,
+                            zoom=0,
+                            pitch=45,
+                        ),
+                        layers=[
+                            pdk.Layer(
+                                "ColumnLayer",
+                                data=chart_data,
+                                get_position="[placed_x_cm, placed_y_cm]",
+                                get_elevation="placed_z_cm",
+                                elevation_scale=2,
+                                radius=30,
+                                get_fill_color="[0, 120, 255, 180]",
+                                pickable=True,
+                                auto_highlight=True,
+                            )
+                        ],
+                    )
+                )
+
             gross_map = estimate_gross_weight_by_container(result.placements, special_counts)
             gross_df = pd.DataFrame(gross_map.items(), columns=["container", "estimated_gross_kg"])
             st.subheader("④ 推定トータルグロスウェイト")
@@ -183,7 +247,18 @@ with tab_validate:
             st.error("OOG判定基準コンテナを選択してください")
         else:
             spec = next(spec for spec in standard_specs if spec.type == validate_type)
-            result = validate(pieces, spec, int(validate_count), Decimal(str(bias_threshold)), ref_spec)
+            constraints = PackingConstraints(
+                max_cg_offset_x_pct=Decimal(str(max_cg_offset_x_pct)),
+                max_cg_offset_y_pct=Decimal(str(max_cg_offset_y_pct)),
+            )
+            result = validate(
+                pieces,
+                spec,
+                int(validate_count),
+                Decimal(str(bias_threshold)),
+                ref_spec,
+                constraints,
+            )
             oog_lookup = {piece.piece_id: oog for piece, oog in result.oog_results}
             df = build_placement_rows(result.placements, oog_lookup, result.bias_by_container, order_map, package_lookup)
             st.dataframe(df)
@@ -193,6 +268,26 @@ with tab_validate:
                 data=df.to_csv(index=False).encode("utf-8-sig"),
                 file_name="vanning_plan.csv",
             )
+            st.subheader("積載不可貨物 (unplaced)")
+            if result.unplaced:
+                unplaced_df = pd.DataFrame(
+                    [
+                        {
+                            "piece_id": p.piece_id,
+                            "orig_id": p.orig_id,
+                            "desc": p.desc,
+                            "L_cm": p.L_cm,
+                            "W_cm": p.W_cm,
+                            "H_cm": p.H_cm,
+                            "weight_kg": p.weight_kg,
+                            "reason_hint": "本数不足または制約超過",
+                        }
+                        for p in result.unplaced
+                    ]
+                )
+                st.dataframe(unplaced_df)
+            else:
+                st.success("積載不可貨物はありません")
             lines = [
                 "Vanning Plan",
                 f"Container: {validate_type} x {int(validate_count)}",
