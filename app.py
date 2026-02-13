@@ -28,11 +28,73 @@ from container_planner.pdf_export import build_text_pdf
 st.set_page_config(page_title="コンテナ詰め算出アプリ", layout="wide")
 st.title("コンテナ詰め算出アプリ")
 
+# 一般的な海上コンテナ仕様の代表値（運送会社公開スペックでよく使われる値を採用）
+DEFAULT_CONTAINERS_YAML = """
+containers:
+  - type: 20GP
+    category: STANDARD
+    inner_L_cm: 589
+    inner_W_cm: 235
+    inner_H_cm: 239
+    max_payload_kg: 28200
+    cost: 1.0
+  - type: 40GP
+    category: STANDARD
+    inner_L_cm: 1203
+    inner_W_cm: 235
+    inner_H_cm: 239
+    max_payload_kg: 26700
+    cost: 1.7
+  - type: 40HC
+    category: STANDARD
+    inner_L_cm: 1203
+    inner_W_cm: 235
+    inner_H_cm: 269
+    max_payload_kg: 26600
+    cost: 1.9
+  - type: OT
+    category: SPECIAL
+    deck_L_cm: 1200
+    deck_W_cm: 235
+    max_payload_kg: 28000
+  - type: FR
+    category: SPECIAL
+    deck_L_cm: 1160
+    deck_W_cm: 240
+    max_payload_kg: 34000
+  - type: RF
+    category: SPECIAL
+    inner_L_cm: 1150
+    inner_W_cm: 228
+    inner_H_cm: 220
+    max_payload_kg: 27500
+""".strip()
+
 
 def _to_decimal(value):
     if value is None:
         return None
     return Decimal(str(value))
+
+
+def _parse_container_specs(containers_yaml: str):
+    specs = []
+    data = yaml.safe_load(containers_yaml) or {}
+    for item in data.get("containers", []):
+        specs.append(
+            ContainerSpec(
+                type=item.get("type"),
+                category=item.get("category"),
+                inner_L_cm=_to_decimal(item.get("inner_L_cm")),
+                inner_W_cm=_to_decimal(item.get("inner_W_cm")),
+                inner_H_cm=_to_decimal(item.get("inner_H_cm")),
+                deck_L_cm=_to_decimal(item.get("deck_L_cm")),
+                deck_W_cm=_to_decimal(item.get("deck_W_cm")),
+                max_payload_kg=_to_decimal(item.get("max_payload_kg")),
+                cost=_to_decimal(item.get("cost")),
+            )
+        )
+    return specs
 
 
 with st.sidebar:
@@ -43,30 +105,65 @@ with st.sidebar:
     max_cg_offset_x_pct = st.number_input("重心X偏差上限(%)", min_value=0.0, max_value=100.0, value=100.0)
     max_cg_offset_y_pct = st.number_input("重心Y偏差上限(%)", min_value=0.0, max_value=100.0, value=100.0)
 
-st.subheader("貨物データ入力")
-col1, col2 = st.columns(2)
-with col1:
-    cargo_file = st.file_uploader("貨物CSVアップロード", type=["csv"], key="cargo")
-with col2:
-    cargo_text = st.text_area("貨物CSVテキスト貼り付け", height=150)
+input_tab, tab_estimate, tab_validate = st.tabs(["入力", "Estimate", "Validate"])
 
-cargo_df = None
-if cargo_file is not None:
-    cargo_df = pd.read_csv(cargo_file)
-elif cargo_text.strip():
-    cargo_df = load_cargo_csv(cargo_text)
-else:
-    try:
-        cargo_df = pd.read_csv("data/cargo.sample.csv")
-    except (FileNotFoundError, EmptyDataError):
-        cargo_df = None
+with input_tab:
+    st.header("① データ入力")
 
-if cargo_df is not None:
-    cargo_df = st.data_editor(cargo_df, num_rows="dynamic")
+    with st.form("input_form"):
+        st.subheader("貨物データ")
+        col1, col2 = st.columns(2)
+        with col1:
+            cargo_file = st.file_uploader("貨物CSVアップロード", type=["csv"], key="cargo")
+        with col2:
+            cargo_text = st.text_area("貨物CSVテキスト貼り付け", height=150)
 
-st.subheader("荷姿マスタ (任意)")
-package_file = st.file_uploader("荷姿マスタCSVアップロード", type=["csv"], key="package")
-package_text = st.text_area("荷姿マスタCSVテキスト貼り付け", height=120)
+        st.subheader("荷姿マスタ (任意)")
+        package_file = st.file_uploader("荷姿マスタCSVアップロード", type=["csv"], key="package")
+        package_text = st.text_area("荷姿マスタCSVテキスト貼り付け", height=120)
+
+        st.subheader("コンテナ仕様")
+        use_default_specs = st.toggle("埋め込み標準仕様を使う（推奨）", value=True)
+        container_file = st.file_uploader("containers.yaml アップロード（任意）", type=["yaml", "yml"], key="container")
+        container_text = st.text_area("containers.yaml テキスト貼り付け（任意）", height=120)
+
+        submitted = st.form_submit_button("入力内容を反映")
+
+    if not submitted and "inputs_applied" not in st.session_state:
+        st.info("まず『入力内容を反映』を押してください。未入力時はサンプル貨物＋埋め込みコンテナ仕様を使用します。")
+
+    if submitted or "inputs_applied" in st.session_state:
+        st.session_state["inputs_applied"] = True
+        st.session_state["cargo_file"] = cargo_file
+        st.session_state["cargo_text"] = cargo_text
+        st.session_state["package_file"] = package_file
+        st.session_state["package_text"] = package_text
+        st.session_state["container_file"] = container_file
+        st.session_state["container_text"] = container_text
+        st.session_state["use_default_specs"] = use_default_specs
+
+    cargo_file = st.session_state.get("cargo_file")
+    cargo_text = st.session_state.get("cargo_text", "")
+    package_file = st.session_state.get("package_file")
+    package_text = st.session_state.get("package_text", "")
+    container_file = st.session_state.get("container_file")
+    container_text = st.session_state.get("container_text", "")
+    use_default_specs = st.session_state.get("use_default_specs", True)
+
+    cargo_df = None
+    if cargo_file is not None:
+        cargo_df = pd.read_csv(cargo_file)
+    elif cargo_text.strip():
+        cargo_df = load_cargo_csv(cargo_text)
+    else:
+        try:
+            cargo_df = pd.read_csv("data/cargo.sample.csv")
+        except (FileNotFoundError, EmptyDataError):
+            cargo_df = None
+
+    if cargo_df is not None:
+        st.caption("貨物データ（この場で編集できます）")
+        cargo_df = st.data_editor(cargo_df, num_rows="dynamic")
 
 package_mapping = {}
 if package_file is not None:
@@ -74,11 +171,7 @@ if package_file is not None:
 elif package_text.strip():
     package_mapping = load_package_master(package_text)
 
-st.subheader("コンテナ仕様 (任意)")
-container_file = st.file_uploader("containers.yaml アップロード", type=["yaml", "yml"], key="container")
-container_text = st.text_area("containers.yaml テキスト貼り付け", height=120)
-
-containers_yaml = None
+containers_yaml = DEFAULT_CONTAINERS_YAML if use_default_specs else None
 if container_file is not None:
     containers_yaml = container_file.getvalue().decode("utf-8")
 elif container_text.strip():
@@ -87,21 +180,7 @@ elif container_text.strip():
 container_specs = []
 if containers_yaml:
     try:
-        data = yaml.safe_load(containers_yaml)
-        for item in data.get("containers", []):
-            container_specs.append(
-                ContainerSpec(
-                    type=item.get("type"),
-                    category=item.get("category"),
-                    inner_L_cm=_to_decimal(item.get("inner_L_cm")),
-                    inner_W_cm=_to_decimal(item.get("inner_W_cm")),
-                    inner_H_cm=_to_decimal(item.get("inner_H_cm")),
-                    deck_L_cm=_to_decimal(item.get("deck_L_cm")),
-                    deck_W_cm=_to_decimal(item.get("deck_W_cm")),
-                    max_payload_kg=_to_decimal(item.get("max_payload_kg")),
-                    cost=_to_decimal(item.get("cost")),
-                )
-            )
+        container_specs = _parse_container_specs(containers_yaml)
     except Exception as exc:  # noqa: BLE001
         st.error(f"containers.yaml 読み込みに失敗しました: {exc}")
 
@@ -124,10 +203,8 @@ package_lookup = {piece.piece_id: map_package_text(piece.package_text, package_m
 container_order = [name.strip() for name in container_order_text.split(",") if name.strip()]
 order_map = {name: idx for idx, name in enumerate(container_order)}
 
-tab_estimate, tab_validate = st.tabs(["Estimate", "Validate"])
-
 with tab_estimate:
-    st.header("① 必要本数の自動計算")
+    st.header("② 必要本数の自動計算")
     candidate_types = st.multiselect("候補STANDARDコンテナ", options=[spec.type for spec in standard_specs])
     mode = st.selectbox("目的関数", options=["MIN_CONTAINERS", "MIN_COST"])
     algorithm = st.selectbox("最適化アルゴリズム", options=["SINGLE_TYPE", "MULTI_TYPE"])
@@ -239,7 +316,7 @@ with tab_estimate:
             st.info(f"国内配送要件提案: {advice}")
 
 with tab_validate:
-    st.header("② ローディングプラン作成")
+    st.header("③ ローディングプラン作成")
     validate_type = st.selectbox("検証対象STANDARDコンテナ", options=[spec.type for spec in standard_specs])
     validate_count = st.number_input("本数", min_value=1, max_value=100, value=1)
     if st.button("Validate 実行"):
