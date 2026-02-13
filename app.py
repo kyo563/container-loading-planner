@@ -296,8 +296,9 @@ if not standard_specs:
     st.stop()
 
 ref_options = [spec.type for spec in standard_specs]
-ref_choice = st.selectbox("OOG判定基準コンテナ", options=ref_options, help="OOG判定に使う基準コンテナです。")
+ref_choice = "40HC" if "40HC" in ref_options else ref_options[0]
 ref_spec = next((spec for spec in standard_specs if spec.type == ref_choice), None)
+st.caption(f"OOG判定基準コンテナ: {ref_choice}（見積り基準）")
 
 with main_tab:
     st.header("計画作成")
@@ -469,27 +470,23 @@ with main_tab:
 
     if flow_mode == "コンテナ本数を見積もる":
         st.subheader("必要本数の自動計算")
-        candidate_types = st.multiselect(
-            "候補STANDARDコンテナ",
-            options=[spec.type for spec in standard_specs],
-            default=[spec.type for spec in standard_specs],
-            placeholder="候補を1つ以上選択してください",
-        )
-        mode = st.selectbox("目的関数", options=["MIN_CONTAINERS", "MIN_COST"])
-        algorithm = st.selectbox("最適化アルゴリズム", options=["SINGLE_TYPE", "MULTI_TYPE"])
+        fixed_candidate_order = ["20GP", "40GP", "40HC"]
+        candidates = [spec for t in fixed_candidate_order for spec in standard_specs if spec.type == t]
+        if not candidates:
+            candidates = list(standard_specs)
+        st.caption("見積り優先順位: 20GP（収まる場合）→ 40GP → 40HC。40HCを計算基準に固定。")
 
         if st.button("必要本数を見積もる", use_container_width=True):
-            if not ref_spec or not candidate_types:
-                st.error("OOG判定基準と候補コンテナを選択してください。")
+            if not ref_spec:
+                st.error("OOG判定基準コンテナが見つかりません。")
             else:
-                candidates = [spec for spec in standard_specs if spec.type in candidate_types]
                 result = estimate(
                     pieces,
                     candidates,
                     ref_spec,
                     Decimal(str(bias_threshold)),
-                    mode,
-                    algorithm,
+                    "FIXED_PRIORITY",
+                    "SINGLE_TYPE",
                     constraints,
                 )
 
