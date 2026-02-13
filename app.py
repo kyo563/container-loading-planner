@@ -26,6 +26,7 @@ from container_planner.advisory import (
     summarize_special_container_needs,
 )
 from container_planner.models import ContainerSpec, PackingConstraints
+from container_planner.oog import evaluate_oog
 from container_planner.pdf_export import build_text_pdf
 
 st.set_page_config(page_title="コンテナ詰め算出アプリ", layout="wide")
@@ -228,64 +229,107 @@ with st.sidebar:
     max_cg_offset_x_pct = st.number_input("重心X偏差上限(%)", min_value=0.0, max_value=100.0, value=100.0)
     max_cg_offset_y_pct = st.number_input("重心Y偏差上限(%)", min_value=0.0, max_value=100.0, value=100.0)
 
-input_tab, estimate_tab, validate_tab = st.tabs(["入力", "Estimate", "Validate"])
+if "cargo_df" not in st.session_state:
+    st.session_state["cargo_df"] = _empty_cargo_df()
 
-with input_tab:
-    st.header("① データ入力")
-    st.caption("CSVアップロードまたはテキスト貼り付けに対応。必要ならサンプルデータを読み込んで開始できます。")
+main_tab, maintenance_tab = st.tabs(["計画作成", "データメンテナンス"])
 
-    sample_col1, sample_col2, sample_col3 = st.columns(3)
-    if sample_col1.button("サンプル貨物を読み込む", use_container_width=True):
+with maintenance_tab:
+    st.header("データメンテナンス")
+    st.caption("規定情報（荷姿マスタ・コンテナ仕様）をここで編集します。初期値には一般的な値を入れています。")
+
+    sample_col1, sample_col2 = st.columns(2)
+    if sample_col1.button("サンプル荷姿マスタを入力欄へ", use_container_width=True):
+        st.session_state["package_text_input"] = _read_text("data/package_master.sample.csv")
+        st.success("荷姿マスタのサンプルを反映しました。")
+    if sample_col2.button("サンプルコンテナ仕様を入力欄へ", use_container_width=True):
+        st.session_state["container_text_input"] = _read_text("data/containers.sample.yaml")
+        st.success("コンテナ仕様サンプルを反映しました。")
+
+    st.subheader("荷姿マスタ (任意)")
+    st.file_uploader("荷姿マスタCSVアップロード", type=["csv"], key="package")
+    st.text_area(
+        "荷姿マスタCSVテキスト貼り付け",
+        key="package_text_input",
+        height=140,
+        placeholder="alias,code\nCRATE,CT\nPALLET,PL",
+    )
+
+    st.subheader("コンテナ仕様")
+    st.checkbox("デフォルト仕様を使う", value=True, key="use_default_specs")
+    st.file_uploader("containers.yamlアップロード", type=["yaml", "yml"], key="container")
+    st.text_area(
+        "containers.yamlテキスト貼り付け",
+        key="container_text_input",
+        height=200,
+        value=DEFAULT_CONTAINERS_YAML,
+        placeholder="containers:\n  - type: 20GP\n    category: STANDARD\n    inner_L_cm: 589\n    inner_W_cm: 235\n    inner_H_cm: 239",
+    )
+
+# 荷姿マスタ
+package_mapping = {}
+try:
+    if "package" in st.session_state and st.session_state["package"] is not None:
+        package_mapping = load_package_master(st.session_state["package"].getvalue().decode("utf-8"))
+    elif st.session_state.get("package_text_input", "").strip():
+        package_mapping = load_package_master(st.session_state["package_text_input"])
+except Exception as exc:  # noqa: BLE001
+    st.error(f"荷姿マスタ読み込みに失敗しました: {exc}")
+
+# コンテナ仕様
+containers_yaml = DEFAULT_CONTAINERS_YAML if st.session_state.get("use_default_specs", True) else None
+if "container" in st.session_state and st.session_state["container"] is not None:
+    containers_yaml = st.session_state["container"].getvalue().decode("utf-8")
+elif st.session_state.get("container_text_input", "").strip():
+    containers_yaml = st.session_state["container_text_input"]
+
+container_specs = []
+if containers_yaml:
+    try:
+        container_specs = _parse_container_specs(containers_yaml)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"containers.yaml 読み込みに失敗しました: {exc}")
+
+standard_specs = [spec for spec in container_specs if spec.category == "STANDARD"]
+if not standard_specs:
+    st.warning("STANDARDコンテナ仕様がありません。データメンテナンスタブでコンテナ仕様を確認してください。")
+    st.stop()
+
+ref_options = [spec.type for spec in standard_specs]
+ref_choice = st.selectbox("OOG判定基準コンテナ", options=ref_options, help="OOG判定に使う基準コンテナです。")
+ref_spec = next((spec for spec in standard_specs if spec.type == ref_choice), None)
+
+with main_tab:
+    st.header("計画作成")
+    st.caption("①本数条件を選択 → ②パッキングリスト入力 → ③バンプラン作成 の順で進めます。")
+
+    flow_mode = st.radio(
+        "まずどちらで進めますか？",
+        options=["コンテナ本数が決まっている", "コンテナ本数を見積もる"],
+        horizontal=True,
+    )
+
+    st.subheader("パッキングリスト入力")
+    cargo_col1, cargo_col2 = st.columns(2)
+    with cargo_col1:
+        cargo_file = st.file_uploader("貨物CSVアップロード", type=["csv"], key="cargo")
+    with cargo_col2:
+        cargo_text = st.text_area(
+            "貨物CSVテキスト貼り付け",
+            height=180,
+            placeholder="id,desc,qty,L_cm,W_cm,H_cm,weight_kg,package_text,stackable,rotate_allowed\n貨物no.1,機械,1,100,80,50,500,CRATE,false,false",
+        )
+
+    csv_col1, csv_col2 = st.columns(2)
+    if csv_col1.button("サンプル貨物を読み込む", use_container_width=True):
         try:
             sample_df = load_cargo_csv(_read_text("data/cargo.sample.csv"))
             st.session_state["cargo_df"] = _normalize_cargo_dataframe(sample_df)
             st.success("サンプル貨物を読み込みました。")
         except Exception as exc:  # noqa: BLE001
             st.error(f"サンプル貨物の読み込みに失敗しました: {exc}")
-    if sample_col2.button("サンプル荷姿マスタを入力欄へ", use_container_width=True):
-        st.session_state["package_text_input"] = _read_text("data/package_master.sample.csv")
-        st.success("荷姿マスタのサンプルを反映しました。")
-    if sample_col3.button("サンプルコンテナ仕様を入力欄へ", use_container_width=True):
-        st.session_state["container_text_input"] = _read_text("data/containers.sample.yaml")
-        st.success("コンテナ仕様サンプルを反映しました。")
 
-    with st.form("input_form"):
-        st.subheader("貨物データ")
-        cargo_col1, cargo_col2 = st.columns(2)
-        with cargo_col1:
-            cargo_file = st.file_uploader("貨物CSVアップロード", type=["csv"], key="cargo")
-        with cargo_col2:
-            cargo_text = st.text_area(
-                "貨物CSVテキスト貼り付け",
-                height=180,
-                placeholder="id,desc,qty,L_cm,W_cm,H_cm,weight_kg,package_text\nA001,機械,2,120,100,140,850,CRATE",
-            )
-
-        st.subheader("荷姿マスタ (任意)")
-        package_file = st.file_uploader("荷姿マスタCSVアップロード", type=["csv"], key="package")
-        package_text = st.text_area(
-            "荷姿マスタCSVテキスト貼り付け",
-            key="package_text_input",
-            height=130,
-            placeholder="alias,code\nCRATE,CT\nPALLET,PL",
-        )
-
-        st.subheader("コンテナ仕様")
-        use_default_specs = st.checkbox("デフォルト仕様を使う", value=True, key="use_default_specs")
-        container_file = st.file_uploader("containers.yamlアップロード", type=["yaml", "yml"], key="container")
-        container_text = st.text_area(
-            "containers.yamlテキスト貼り付け",
-            key="container_text_input",
-            height=170,
-            placeholder="containers:\n  - type: 20GP\n    category: STANDARD\n    inner_L_cm: 589\n    inner_W_cm: 235\n    inner_H_cm: 239",
-        )
-
-        submitted = st.form_submit_button("入力を反映")
-
-    if "cargo_df" not in st.session_state:
-        st.session_state["cargo_df"] = _empty_cargo_df()
-
-    if submitted:
+    if csv_col2.button("貨物CSV入力を反映", use_container_width=True):
         try:
             if cargo_file is not None:
                 loaded_df = load_cargo_csv(cargo_file.getvalue().decode("utf-8"))
@@ -293,7 +337,9 @@ with input_tab:
             elif cargo_text.strip():
                 loaded_df = load_cargo_csv(cargo_text)
                 st.session_state["cargo_df"] = _normalize_cargo_dataframe(loaded_df)
-            st.success("入力データを反映しました。")
+            else:
+                st.warning("CSVをアップロードするか、テキストを入力してください。")
+            st.success("貨物データを反映しました。")
         except EmptyDataError:
             st.error("貨物CSVが空です。内容を入力してください。")
         except CargoInputError as exc:
@@ -388,145 +434,155 @@ with input_tab:
     )
     st.session_state["cargo_df"] = _normalize_cargo_dataframe(edited_df)
 
-cargo_df = st.session_state.get("cargo_df", _empty_cargo_df())
+    cargo_df = st.session_state.get("cargo_df", _empty_cargo_df())
+    if cargo_df.empty:
+        st.info("貨物データが未入力です。CSV読み込みまたはフォーム入力を行ってください。")
+        st.stop()
 
-# 荷姿マスタ
-package_mapping = {}
-try:
-    if "package" in st.session_state and st.session_state["package"] is not None:
-        package_mapping = load_package_master(st.session_state["package"].getvalue().decode("utf-8"))
-    elif st.session_state.get("package_text_input", "").strip():
-        package_mapping = load_package_master(st.session_state["package_text_input"])
-except Exception as exc:  # noqa: BLE001
-    st.error(f"荷姿マスタ読み込みに失敗しました: {exc}")
-
-# コンテナ仕様
-containers_yaml = DEFAULT_CONTAINERS_YAML if st.session_state.get("use_default_specs", True) else None
-if "container" in st.session_state and st.session_state["container"] is not None:
-    containers_yaml = st.session_state["container"].getvalue().decode("utf-8")
-elif st.session_state.get("container_text_input", "").strip():
-    containers_yaml = st.session_state["container_text_input"]
-
-container_specs = []
-if containers_yaml:
     try:
-        container_specs = _parse_container_specs(containers_yaml)
-    except Exception as exc:  # noqa: BLE001
-        st.error(f"containers.yaml 読み込みに失敗しました: {exc}")
+        cargo_rows = normalize_cargo_rows(cargo_df)
+        pieces = expand_pieces(cargo_rows)
+    except CargoInputError as exc:
+        st.error(str(exc))
+        st.stop()
 
-standard_specs = [spec for spec in container_specs if spec.category == "STANDARD"]
-if not standard_specs:
-    st.warning("STANDARDコンテナ仕様がありません。入力タブでコンテナ仕様を確認してください。")
-    st.stop()
-
-ref_options = [spec.type for spec in standard_specs]
-ref_choice = st.selectbox("OOG判定基準コンテナ", options=ref_options, help="OOG判定に使う基準コンテナです。")
-ref_spec = next((spec for spec in standard_specs if spec.type == ref_choice), None)
-
-if cargo_df.empty:
-    st.info("貨物データが未入力です。入力タブでCSVを投入してください。")
-    st.stop()
-
-try:
-    cargo_rows = normalize_cargo_rows(cargo_df)
-    pieces = expand_pieces(cargo_rows)
-except CargoInputError as exc:
-    st.error(str(exc))
-    st.stop()
-
-package_lookup = {piece.piece_id: map_package_text(piece.package_text, package_mapping) for piece in pieces}
-container_order = [name.strip() for name in container_order_text.split(",") if name.strip()]
-order_map = {name: idx for idx, name in enumerate(container_order)}
-constraints = PackingConstraints(
-    max_cg_offset_x_pct=Decimal(str(max_cg_offset_x_pct)),
-    max_cg_offset_y_pct=Decimal(str(max_cg_offset_y_pct)),
-)
-
-with estimate_tab:
-    st.header("② 必要本数の自動計算")
-    candidate_types = st.multiselect(
-        "候補STANDARDコンテナ",
-        options=[spec.type for spec in standard_specs],
-        default=[spec.type for spec in standard_specs],
-        placeholder="候補を1つ以上選択してください",
+    package_lookup = {piece.piece_id: map_package_text(piece.package_text, package_mapping) for piece in pieces}
+    container_order = [name.strip() for name in container_order_text.split(",") if name.strip()]
+    order_map = {name: idx for idx, name in enumerate(container_order)}
+    constraints = PackingConstraints(
+        max_cg_offset_x_pct=Decimal(str(max_cg_offset_x_pct)),
+        max_cg_offset_y_pct=Decimal(str(max_cg_offset_y_pct)),
     )
-    mode = st.selectbox("目的関数", options=["MIN_CONTAINERS", "MIN_COST"])
-    algorithm = st.selectbox("最適化アルゴリズム", options=["SINGLE_TYPE", "MULTI_TYPE"])
 
-    if st.button("Estimate 実行", use_container_width=True):
-        if not ref_spec or not candidate_types:
-            st.error("OOG判定基準と候補コンテナを選択してください。")
-        else:
-            candidates = [spec for spec in standard_specs if spec.type in candidate_types]
-            result = estimate(
-                pieces,
-                candidates,
-                ref_spec,
-                Decimal(str(bias_threshold)),
-                mode,
-                algorithm,
-                constraints,
-            )
+    if flow_mode == "コンテナ本数を見積もる":
+        st.subheader("必要本数の自動計算")
+        candidate_types = st.multiselect(
+            "候補STANDARDコンテナ",
+            options=[spec.type for spec in standard_specs],
+            default=[spec.type for spec in standard_specs],
+            placeholder="候補を1つ以上選択してください",
+        )
+        mode = st.selectbox("目的関数", options=["MIN_CONTAINERS", "MIN_COST"])
+        algorithm = st.selectbox("最適化アルゴリズム", options=["SINGLE_TYPE", "MULTI_TYPE"])
 
-            st.subheader("推奨本数")
-            special_counts = summarize_special_container_needs(result.oog_results)
-            summary_df = pd.DataFrame(result.summary_by_type.items(), columns=["type", "count"])
-            if special_counts:
-                summary_df = pd.concat(
-                    [summary_df, pd.DataFrame(special_counts.items(), columns=["type", "count"])],
-                    ignore_index=True,
+        if st.button("必要本数を見積もる", use_container_width=True):
+            if not ref_spec or not candidate_types:
+                st.error("OOG判定基準と候補コンテナを選択してください。")
+            else:
+                candidates = [spec for spec in standard_specs if spec.type in candidate_types]
+                result = estimate(
+                    pieces,
+                    candidates,
+                    ref_spec,
+                    Decimal(str(bias_threshold)),
+                    mode,
+                    algorithm,
+                    constraints,
                 )
-            st.dataframe(summary_df, use_container_width=True)
-            st.download_button(
-                "本数見積CSVダウンロード",
-                data=summary_df.to_csv(index=False).encode("utf-8-sig"),
-                file_name="container_estimate.csv",
-                use_container_width=True,
-            )
 
-            _render_result_block(result, order_map, package_lookup, title_prefix="Estimate")
-
-with validate_tab:
-    st.header("③ ローディングプラン作成")
-    validate_type = st.selectbox(
-        "検証対象STANDARDコンテナ",
-        options=[spec.type for spec in standard_specs],
-        placeholder="検証するコンテナを選択",
-    )
-    validate_count = st.number_input("本数", min_value=1, max_value=100, value=1)
-
-    if st.button("Validate 実行", use_container_width=True):
-        if not ref_spec:
-            st.error("OOG判定基準コンテナを選択してください。")
-        else:
-            spec = next(spec for spec in standard_specs if spec.type == validate_type)
-            result = validate(
-                pieces,
-                spec,
-                int(validate_count),
-                Decimal(str(bias_threshold)),
-                ref_spec,
-                constraints,
-            )
-            _render_result_block(result, order_map, package_lookup, title_prefix="Validate")
-
-            oog_lookup = {piece.piece_id: oog for piece, oog in result.oog_results}
-            plan_df = build_placement_rows(result.placements, oog_lookup, result.bias_by_container, order_map, package_lookup)
-            lines = [
-                "Vanning Plan",
-                f"Container: {validate_type} x {int(validate_count)}",
-                f"Placed pieces: {len(result.placements)} / Total pieces: {len(pieces)}",
-                "---",
-            ]
-            for _, row in plan_df.head(40).iterrows():
-                lines.append(
-                    f"{row['container_label']} | {row['cargo_piece_id']} | xyz=({row['placed_x_cm']},{row['placed_y_cm']},{row['placed_z_cm']})"
+                st.subheader("推奨本数")
+                special_counts = summarize_special_container_needs(result.oog_results)
+                summary_df = pd.DataFrame(result.summary_by_type.items(), columns=["type", "count"])
+                if special_counts:
+                    summary_df = pd.concat(
+                        [summary_df, pd.DataFrame(special_counts.items(), columns=["type", "count"])],
+                        ignore_index=True,
+                    )
+                st.dataframe(summary_df, use_container_width=True)
+                st.download_button(
+                    "本数見積CSVダウンロード",
+                    data=summary_df.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="container_estimate.csv",
+                    use_container_width=True,
                 )
-            st.download_button(
-                "バンニング図面PDFダウンロード",
-                data=build_text_pdf(lines),
-                file_name="vanning_plan.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
-            st.caption("※ PDFは簡易図面（文字ベース）です。")
+
+                _render_result_block(result, order_map, package_lookup, title_prefix="Estimate")
+
+    else:
+        st.subheader("必要コンテナ本数の確定")
+        st.caption("例: 20GP x2、40HC x1、OT x1 のように本数を入力してください。")
+        count_cols = st.columns(3)
+        counts_by_type = {}
+        for idx, spec in enumerate(container_specs):
+            with count_cols[idx % 3]:
+                counts_by_type[spec.type] = st.number_input(
+                    f"{spec.type} 本数",
+                    min_value=0,
+                    max_value=100,
+                    value=0,
+                    step=1,
+                    key=f"count_{spec.type}",
+                )
+
+        if st.button("バンプラン作成", use_container_width=True):
+            standard_count_specs = [(spec, int(counts_by_type.get(spec.type, 0))) for spec in standard_specs]
+            standard_count_specs = [(spec, count) for spec, count in standard_count_specs if count > 0]
+            if not standard_count_specs:
+                st.error("少なくとも1つのSTANDARDコンテナ本数を入力してください。")
+            else:
+                remaining = list(pieces)
+                placements = []
+                bias_by_container = {}
+                for spec, count in standard_count_specs:
+                    if not remaining:
+                        break
+                    result = validate(
+                        remaining,
+                        spec,
+                        count,
+                        Decimal(str(bias_threshold)),
+                        ref_spec,
+                        constraints,
+                    )
+                    placements.extend(result.placements)
+                    bias_by_container.update(result.bias_by_container)
+                    remaining = result.unplaced
+
+                oog_results = [(piece, evaluate_oog(piece, ref_spec)) for piece in pieces]
+
+                class CombinedResult:
+                    def __init__(self, placements, unplaced, bias_by_container, oog_results):
+                        self.placements = placements
+                        self.unplaced = unplaced
+                        self.bias_by_container = bias_by_container
+                        self.oog_results = oog_results
+
+                combined = CombinedResult(placements, remaining, bias_by_container, oog_results)
+                _render_result_block(combined, order_map, package_lookup, title_prefix="Loading")
+
+                selected_counts = {k: int(v) for k, v in counts_by_type.items() if int(v) > 0}
+                summary_df = pd.DataFrame(selected_counts.items(), columns=["type", "count"])
+                st.subheader("確定したコンテナ本数")
+                st.dataframe(summary_df, use_container_width=True)
+                st.download_button(
+                    "確定本数CSVダウンロード",
+                    data=summary_df.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="fixed_container_counts.csv",
+                    use_container_width=True,
+                )
+
+                plan_df = build_placement_rows(
+                    combined.placements,
+                    {piece.piece_id: oog for piece, oog in combined.oog_results},
+                    combined.bias_by_container,
+                    order_map,
+                    package_lookup,
+                )
+                lines = [
+                    "Vanning Plan",
+                    "Container counts: " + ", ".join([f"{t} x {c}" for t, c in selected_counts.items()]),
+                    f"Placed pieces: {len(combined.placements)} / Total pieces: {len(pieces)}",
+                    "---",
+                ]
+                for _, row in plan_df.head(40).iterrows():
+                    lines.append(
+                        f"{row['container_label']} | {row['cargo_piece_id']} | xyz=({row['placed_x_cm']},{row['placed_y_cm']},{row['placed_z_cm']})"
+                    )
+                st.download_button(
+                    "バンニング図面PDFダウンロード",
+                    data=build_text_pdf(lines),
+                    file_name="vanning_plan.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+                st.caption("※ PDFは簡易図面（文字ベース）です。")
