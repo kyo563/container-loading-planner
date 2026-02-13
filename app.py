@@ -2,6 +2,7 @@ import io
 from decimal import Decimal
 
 import pandas as pd
+from pandas.errors import EmptyDataError
 import streamlit as st
 import yaml
 
@@ -16,10 +17,15 @@ from container_planner import (
     normalize_cargo_rows,
     validate,
 )
+from container_planner.advisory import (
+    estimate_gross_weight_by_container,
+    suggest_truck_requirement,
+    summarize_special_container_needs,
+)
 from container_planner.models import ContainerSpec
+from container_planner.pdf_export import build_text_pdf
 
 st.set_page_config(page_title="コンテナ詰め算出アプリ", layout="wide")
-
 st.title("コンテナ詰め算出アプリ")
 
 
@@ -32,7 +38,7 @@ def _to_decimal(value):
 with st.sidebar:
     st.header("共通設定")
     bias_threshold = st.number_input("偏荷重警告閾値(%)", min_value=0.0, max_value=100.0, value=20.0)
-    container_order_text = st.text_input("コンテナ表示順 (カンマ区切り)", value="20GP,40GP,40HC,OT,FR")
+    container_order_text = st.text_input("コンテナ表示順 (カンマ区切り)", value="20GP,40GP,40HC,OT,FR,RF")
 
 st.subheader("貨物データ入力")
 col1, col2 = st.columns(2)
@@ -48,13 +54,11 @@ elif cargo_text.strip():
     cargo_df = load_cargo_csv(cargo_text)
 else:
     try:
-        sample = pd.read_csv("data/cargo.sample.csv")
-        cargo_df = sample
-    except FileNotFoundError:
+        cargo_df = pd.read_csv("data/cargo.sample.csv")
+    except (FileNotFoundError, EmptyDataError):
         cargo_df = None
 
 if cargo_df is not None:
-    st.caption("取り込み後の編集テーブル")
     cargo_df = st.data_editor(cargo_df, num_rows="dynamic")
 
 st.subheader("荷姿マスタ (任意)")
@@ -66,11 +70,6 @@ if package_file is not None:
     package_mapping = load_package_master(package_file.getvalue().decode("utf-8"))
 elif package_text.strip():
     package_mapping = load_package_master(package_text)
-else:
-    try:
-        package_mapping = load_package_master(open("data/package_master.sample.csv", encoding="utf-8").read())
-    except FileNotFoundError:
-        package_mapping = {}
 
 st.subheader("コンテナ仕様 (任意)")
 container_file = st.file_uploader("containers.yaml アップロード", type=["yaml", "yml"], key="container")
@@ -81,11 +80,6 @@ if container_file is not None:
     containers_yaml = container_file.getvalue().decode("utf-8")
 elif container_text.strip():
     containers_yaml = container_text
-else:
-    try:
-        containers_yaml = open("data/containers.sample.yaml", encoding="utf-8").read()
-    except FileNotFoundError:
-        containers_yaml = None
 
 container_specs = []
 if containers_yaml:
@@ -111,11 +105,7 @@ if containers_yaml:
 standard_specs = [spec for spec in container_specs if spec.category == "STANDARD"]
 ref_options = [spec.type for spec in standard_specs]
 ref_choice = st.selectbox("OOG判定基準コンテナ", options=ref_options) if ref_options else None
-
-if ref_choice:
-    ref_spec = next(spec for spec in standard_specs if spec.type == ref_choice)
-else:
-    ref_spec = None
+ref_spec = next((spec for spec in standard_specs if spec.type == ref_choice), None)
 
 if cargo_df is None:
     st.stop()
@@ -127,52 +117,65 @@ except CargoInputError as exc:
     st.error(str(exc))
     st.stop()
 
-package_lookup = {}
-for piece in pieces:
-    result = map_package_text(piece.package_text, package_mapping)
-    package_lookup[piece.piece_id] = result
-
+package_lookup = {piece.piece_id: map_package_text(piece.package_text, package_mapping) for piece in pieces}
 container_order = [name.strip() for name in container_order_text.split(",") if name.strip()]
 order_map = {name: idx for idx, name in enumerate(container_order)}
 
 tab_estimate, tab_validate = st.tabs(["Estimate", "Validate"])
 
 with tab_estimate:
-    st.header("本数見積り")
+    st.header("① 必要本数の自動計算")
     candidate_types = st.multiselect("候補STANDARDコンテナ", options=[spec.type for spec in standard_specs])
     mode = st.selectbox("目的関数", options=["MIN_CONTAINERS", "MIN_COST"])
-    algorithm = st.selectbox("アルゴリズム", options=["MIXED_GREEDY", "SINGLE_TYPE"])
     if st.button("Estimate 実行"):
-        if not ref_spec:
-            st.error("OOG判定基準コンテナを選択してください")
-        elif not candidate_types:
-            st.error("候補コンテナを選択してください")
+        if not ref_spec or not candidate_types:
+            st.error("OOG判定基準と候補コンテナを選択してください")
         else:
             candidates = [spec for spec in standard_specs if spec.type in candidate_types]
-            result = estimate(
-                pieces,
-                candidates,
-                ref_spec,
-                Decimal(str(bias_threshold)),
-                mode,
-                algorithm,
-            )
+            result = estimate(pieces, candidates, ref_spec, Decimal(str(bias_threshold)), mode, "SINGLE_TYPE")
+            special_counts = summarize_special_container_needs(result.oog_results)
+
             st.subheader("推奨本数")
-            st.dataframe(pd.DataFrame(result.summary_by_type.items(), columns=["type", "count"]))
-            st.subheader("警告一覧")
-            st.write(
-                f"未積載: {len(result.unplaced)} 件, OOG: {len(result.oog_results)} 件"
+            summary_df = pd.DataFrame(result.summary_by_type.items(), columns=["type", "count"])
+            if special_counts:
+                summary_df = pd.concat(
+                    [summary_df, pd.DataFrame(special_counts.items(), columns=["type", "count"])],
+                    ignore_index=True,
+                )
+            st.dataframe(summary_df)
+            st.download_button(
+                "本数見積CSVダウンロード",
+                data=summary_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="container_estimate.csv",
             )
+
             oog_lookup = {piece.piece_id: oog for piece, oog in result.oog_results}
-            bias_lookup = result.bias_by_container
-            df = build_placement_rows(result.placements, oog_lookup, bias_lookup, order_map, package_lookup)
+            df = build_placement_rows(result.placements, oog_lookup, result.bias_by_container, order_map, package_lookup)
             st.subheader("配置一覧")
             st.dataframe(df)
-            csv_bytes = df.to_csv(index=False).encode("utf-8")
-            st.download_button("配置一覧CSVダウンロード", data=csv_bytes, file_name="placements.csv")
+            st.download_button(
+                "配置一覧CSVダウンロード",
+                data=df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="placements.csv",
+            )
+
+            gross_map = estimate_gross_weight_by_container(result.placements, special_counts)
+            gross_df = pd.DataFrame(gross_map.items(), columns=["container", "estimated_gross_kg"])
+            st.subheader("④ 推定トータルグロスウェイト")
+            st.dataframe(gross_df)
+
+            if result.oog_results:
+                max_over_w = max([oog.over_W_cm for _, oog in result.oog_results])
+                max_over_h = max([oog.over_H_cm for _, oog in result.oog_results])
+            else:
+                max_over_w = Decimal("0")
+                max_over_h = Decimal("0")
+            total_gross = sum(gross_map.values(), Decimal("0"))
+            advice = suggest_truck_requirement(total_gross, max_over_w, max_over_h)
+            st.info(f"国内配送要件提案: {advice}")
 
 with tab_validate:
-    st.header("収まり検証")
+    st.header("② ローディングプラン作成")
     validate_type = st.selectbox("検証対象STANDARDコンテナ", options=[spec.type for spec in standard_specs])
     validate_count = st.number_input("本数", min_value=1, max_value=100, value=1)
     if st.button("Validate 実行"):
@@ -180,22 +183,31 @@ with tab_validate:
             st.error("OOG判定基準コンテナを選択してください")
         else:
             spec = next(spec for spec in standard_specs if spec.type == validate_type)
-            result = validate(
-                pieces,
-                spec,
-                int(validate_count),
-                Decimal(str(bias_threshold)),
-                ref_spec,
-            )
-            st.subheader("収まり判定")
-            if result.unplaced:
-                st.warning("未積載があります")
-            else:
-                st.success("全量収まりました")
+            result = validate(pieces, spec, int(validate_count), Decimal(str(bias_threshold)), ref_spec)
             oog_lookup = {piece.piece_id: oog for piece, oog in result.oog_results}
-            bias_lookup = result.bias_by_container
-            df = build_placement_rows(result.placements, oog_lookup, bias_lookup, order_map, package_lookup)
-            st.subheader("配置一覧")
+            df = build_placement_rows(result.placements, oog_lookup, result.bias_by_container, order_map, package_lookup)
             st.dataframe(df)
-            csv_bytes = df.to_csv(index=False).encode("utf-8")
-            st.download_button("配置一覧CSVダウンロード", data=csv_bytes, file_name="placements_validate.csv")
+
+            st.download_button(
+                "バンニングプランCSVダウンロード",
+                data=df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="vanning_plan.csv",
+            )
+            lines = [
+                "Vanning Plan",
+                f"Container: {validate_type} x {int(validate_count)}",
+                f"Placed pieces: {len(result.placements)} / Total pieces: {len(pieces)}",
+                "---",
+            ]
+            for _, row in df.head(40).iterrows():
+                lines.append(
+                    f"{row['container_label']} | {row['cargo_piece_id']} | xyz=({row['placed_x_cm']},{row['placed_y_cm']},{row['placed_z_cm']})"
+                )
+            pdf_bytes = build_text_pdf(lines)
+            st.download_button(
+                "バンニング図面PDFダウンロード",
+                data=pdf_bytes,
+                file_name="vanning_plan.pdf",
+                mime="application/pdf",
+            )
+            st.caption("※ PDFは簡易図面（文字ベース）です。")

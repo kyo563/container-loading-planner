@@ -1,1 +1,38 @@
-
+containers:
+  - type: 20GP
+    category: STANDARD
+    inner_L_cm: 589
+    inner_W_cm: 235
+    inner_H_cm: 239
+    max_payload_kg: 28200
+    cost: 1
+  - type: 40GP
+    category: STANDARD
+    inner_L_cm: 1203
+    inner_W_cm: 235
+    inner_H_cm: 239
+    max_payload_kg: 26700
+    cost: 1.7
+  - type: 40HC
+    category: STANDARD
+    inner_L_cm: 1203
+    inner_W_cm: 235
+    inner_H_cm: 269
+    max_payload_kg: 26600
+    cost: 1.9
+  - type: OT
+    category: SPECIAL
+    deck_L_cm: 1200
+    deck_W_cm: 235
+    max_payload_kg: 28000
+  - type: FR
+    category: SPECIAL
+    deck_L_cm: 1160
+    deck_W_cm: 240
+    max_payload_kg: 34000
+  - type: RF
+    category: SPECIAL
+    inner_L_cm: 1150
+    inner_W_cm: 228
+    inner_H_cm: 220
+    max_payload_kg: 27500
