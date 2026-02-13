@@ -159,7 +159,7 @@ with tab_estimate:
                 file_name="placements.csv",
             )
 
-            gross_map = estimate_gross_weight_by_container(result.placements, special_counts)
+            gross_map = estimate_gross_weight_by_container(result.placements, special_counts, result.oog_results)
             gross_df = pd.DataFrame(gross_map.items(), columns=["container", "estimated_gross_kg"])
             st.subheader("④ 推定トータルグロスウェイト")
             st.dataframe(gross_df)
