@@ -4,6 +4,7 @@ import pandas as pd
 
 from container_planner.io import CargoInputError, normalize_cargo_rows, expand_pieces
 from container_planner.models import ContainerSpec, PackingConstraints
+from container_planner.packing import pack_pieces
 from container_planner.planner import estimate
 
 
@@ -90,3 +91,80 @@ def test_constraints_can_make_piece_unplaced():
     constraints = PackingConstraints(max_cg_offset_x_pct=Decimal("0"), max_cg_offset_y_pct=Decimal("0"))
     result = estimate(pieces, [spec], spec, Decimal("20"), "MIN_CONTAINERS", "SINGLE_TYPE", constraints)
     assert len(result.unplaced) >= 1
+
+
+def test_stack_load_limit_uses_cumulative_weight_on_bottom_piece():
+    df = pd.DataFrame(
+        [
+            {
+                "id": "BOTTOM",
+                "desc": "bottom",
+                "qty": 1,
+                "L_cm": 100,
+                "W_cm": 100,
+                "H_cm": 40,
+                "weight_kg": 50,
+                "max_stack_load_kg": 100,
+            },
+            {
+                "id": "TOP",
+                "desc": "top",
+                "qty": 2,
+                "L_cm": 100,
+                "W_cm": 100,
+                "H_cm": 20,
+                "weight_kg": 80,
+            },
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    spec = ContainerSpec(
+        type="20GP",
+        category="STANDARD",
+        inner_L_cm=Decimal("100"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("200"),
+        max_payload_kg=Decimal("1000"),
+        cost=Decimal("100"),
+    )
+
+    result = pack_pieces(spec, pieces, max_containers=1)
+
+    assert len(result.loads[0].placements) == 2
+    assert len(result.unplaced) == 1
+    assert result.unplaced[0].orig_id == "TOP"
+
+
+def test_incompatible_ids_are_checked_bidirectionally():
+    df = pd.DataFrame(
+        [
+            {
+                "id": "A",
+                "desc": "declares incompatibility",
+                "qty": 1,
+                "L_cm": 100,
+                "W_cm": 100,
+                "H_cm": 50,
+                "weight_kg": 20,
+                "incompatible_with_ids": "B",
+            },
+            {
+                "id": "B",
+                "desc": "does not declare incompatibility",
+                "qty": 1,
+                "L_cm": 100,
+                "W_cm": 100,
+                "H_cm": 50,
+                "weight_kg": 20,
+                "incompatible_with_ids": "",
+            },
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    spec = _base_spec("20GP", "100")
+
+    result = pack_pieces(spec, pieces, max_containers=1)
+
+    assert len(result.loads[0].placements) == 1
+    assert len(result.unplaced) == 1
+    assert result.unplaced[0].orig_id == "B"
