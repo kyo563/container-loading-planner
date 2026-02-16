@@ -431,7 +431,19 @@ with main_tab:
     st.subheader("貨物データ編集")
     st.caption("行の追加/削除や数値の直接編集ができます。selected で対象行を選ぶと一括削除や mm→cm 変換が可能です。")
     editable_df = st.session_state["cargo_df"].copy()
-    editable_df.insert(0, "selected", False)
+    saved_selection = st.session_state.get("cargo_selected", [])
+    selected_values = (saved_selection + [False] * len(editable_df))[: len(editable_df)]
+    selected_series = pd.Series(selected_values, dtype="boolean").fillna(False).astype(bool)
+    editable_df.insert(0, "selected", selected_series)
+
+    select_col1, select_col2 = st.columns(2)
+    with select_col1:
+        if st.button("selected を全選択", use_container_width=True):
+            editable_df["selected"] = True
+    with select_col2:
+        if st.button("selected を全解除", use_container_width=True):
+            editable_df["selected"] = False
+
     edited_df = st.data_editor(
         editable_df,
         use_container_width=True,
@@ -471,6 +483,7 @@ with main_tab:
             else:
                 st.warning("変換対象の行を selected してください。")
 
+    st.session_state["cargo_selected"] = edited_df.get("selected", pd.Series(dtype=bool)).fillna(False).tolist()
     st.session_state["cargo_df"] = _normalize_cargo_dataframe(edited_df.drop(columns=["selected"], errors="ignore"))
 
     cargo_df = st.session_state.get("cargo_df", _empty_cargo_df())
