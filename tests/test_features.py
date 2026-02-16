@@ -41,6 +41,28 @@ def test_input_validation_negative_and_zero():
         pass
 
 
+def test_input_validation_error_message_includes_column_and_value():
+    df = pd.DataFrame(
+        [
+            {
+                "id": "A",
+                "desc": "bad",
+                "qty": 1,
+                "L_cm": "abc",
+                "W_cm": 10,
+                "H_cm": 10,
+                "weight_kg": 1,
+            }
+        ]
+    )
+    try:
+        normalize_cargo_rows(df)
+        assert False, "CargoInputError expected"
+    except CargoInputError as exc:
+        assert "L_cm" in str(exc)
+        assert "abc" in str(exc)
+
+
 def test_multi_type_and_unplaced_visibility_data():
     df = pd.DataFrame(
         [

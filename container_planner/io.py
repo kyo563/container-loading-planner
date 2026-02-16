@@ -114,33 +114,51 @@ def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
 def normalize_cargo_rows(df: pd.DataFrame) -> list[CargoRow]:
     rows: list[CargoRow] = []
     for idx, row in df.iterrows():
+        row_no = idx + 1
+
+        def parse_decimal_field(field_name: str):
+            raw = row.get(field_name)
+            try:
+                return to_decimal(raw)
+            except Exception as exc:  # noqa: BLE001
+                raise CargoInputError(
+                    f"{field_name} の値 '{raw}' は数値に変換できません (行 {row_no})"
+                ) from exc
+
         try:
             qty = int(row["qty"])
         except Exception as exc:  # noqa: BLE001
-            raise CargoInputError(f"qtyが整数に変換できません (行 {idx + 1})") from exc
-        try:
-            L_cm = ceil_cm(to_decimal(row["L_cm"]))
-            W_cm = ceil_cm(to_decimal(row["W_cm"]))
-            H_cm = ceil_cm(to_decimal(row["H_cm"]))
-            weight_kg = to_decimal(row["weight_kg"])
-            max_stack_load = row.get("max_stack_load_kg")
-            max_stack_load_kg = None if pd.isna(max_stack_load) or max_stack_load in {"", None} else to_decimal(max_stack_load)
-        except Exception as exc:  # noqa: BLE001
-            raise CargoInputError(f"寸法または重量が数値に変換できません (行 {idx + 1})") from exc
+            raise CargoInputError(f"qty の値 '{row.get('qty')}' は整数に変換できません (行 {row_no})") from exc
+
+        L_cm = ceil_cm(parse_decimal_field("L_cm"))
+        W_cm = ceil_cm(parse_decimal_field("W_cm"))
+        H_cm = ceil_cm(parse_decimal_field("H_cm"))
+        weight_kg = parse_decimal_field("weight_kg")
+
+        max_stack_load = row.get("max_stack_load_kg")
+        if pd.isna(max_stack_load) or max_stack_load in {"", None}:
+            max_stack_load_kg = None
+        else:
+            try:
+                max_stack_load_kg = to_decimal(max_stack_load)
+            except Exception as exc:  # noqa: BLE001
+                raise CargoInputError(
+                    f"max_stack_load_kg の値 '{max_stack_load}' は数値に変換できません (行 {row_no})"
+                ) from exc
         if qty <= 0:
-            raise CargoInputError(f"qtyは1以上である必要があります (行 {idx + 1})")
+            raise CargoInputError(f"qtyは1以上である必要があります (行 {row_no})")
         if qty > MAX_QTY:
-            raise CargoInputError(f"qtyが上限({MAX_QTY})を超えています (行 {idx + 1})")
+            raise CargoInputError(f"qtyが上限({MAX_QTY})を超えています (行 {row_no})")
         for label, value in (("L_cm", L_cm), ("W_cm", W_cm), ("H_cm", H_cm), ("weight_kg", weight_kg)):
             if value <= 0:
-                raise CargoInputError(f"{label}は0より大きい必要があります (行 {idx + 1})")
+                raise CargoInputError(f"{label}は0より大きい必要があります (行 {row_no})")
         for label, value in (("L_cm", L_cm), ("W_cm", W_cm), ("H_cm", H_cm)):
             if value > MAX_DIM_CM:
-                raise CargoInputError(f"{label}が上限({MAX_DIM_CM}cm)を超えています (行 {idx + 1})")
+                raise CargoInputError(f"{label}が上限({MAX_DIM_CM}cm)を超えています (行 {row_no})")
         if weight_kg > MAX_WEIGHT_KG:
-            raise CargoInputError(f"weight_kgが上限({MAX_WEIGHT_KG}kg)を超えています (行 {idx + 1})")
+            raise CargoInputError(f"weight_kgが上限({MAX_WEIGHT_KG}kg)を超えています (行 {row_no})")
         if max_stack_load_kg is not None and max_stack_load_kg < 0:
-            raise CargoInputError(f"max_stack_load_kgは0以上である必要があります (行 {idx + 1})")
+            raise CargoInputError(f"max_stack_load_kgは0以上である必要があります (行 {row_no})")
         cargo = CargoRow(
             id=str(row["id"]).strip(),
             desc=str(row["desc"]).strip(),
