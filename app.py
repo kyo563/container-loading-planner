@@ -29,6 +29,7 @@ from container_planner.advisory import (
 )
 from container_planner.models import ContainerSpec, PackingConstraints
 from container_planner.oog import evaluate_oog
+from container_planner.excel_export import build_excel_report
 from container_planner.pdf_export import build_text_pdf
 
 st.set_page_config(page_title="コンテナ詰め算出アプリ", layout="wide")
@@ -191,6 +192,13 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
         f"{title_prefix} 配置CSVダウンロード",
         data=df.to_csv(index=False).encode("utf-8-sig"),
         file_name=f"{title_prefix.lower()}_placements.csv",
+        use_container_width=True,
+    )
+    st.download_button(
+        f"{title_prefix} Excelダウンロード",
+        data=build_excel_report(df),
+        file_name=f"{title_prefix.lower()}_report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
 
@@ -702,4 +710,11 @@ with main_tab:
                     mime="application/pdf",
                     use_container_width=True,
                 )
-                st.caption("※ PDFは簡易図面（文字ベース）です。")
+                st.download_button(
+                    "Loading結果 Excelダウンロード",
+                    data=build_excel_report(plan_df),
+                    file_name="loading_result_report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+                st.caption("※ PDFは簡易図面（文字ベース）です。主帳票はExcelを利用してください。")
