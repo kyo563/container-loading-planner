@@ -6,6 +6,7 @@ from container_planner.io import CargoInputError, normalize_cargo_rows, expand_p
 from container_planner.advisory import recommend_special_container
 from container_planner.models import ContainerSpec, OogResult, Orientation, PackingConstraints
 from container_planner.planner import estimate
+from container_planner.packing import pack_pieces
 
 
 def _base_spec(container_type: str, cost: str) -> ContainerSpec:
@@ -167,3 +168,52 @@ def test_recommend_special_container_h_only_heavy_is_fr():
         ),
     )
     assert recommend_special_container(piece, oog) == "FR"
+
+
+def test_fr_forbids_stacking_z_gt_zero():
+    df = pd.DataFrame(
+        [
+            {"id": "A", "desc": "big-a", "qty": 1, "L_cm": 100, "W_cm": 100, "H_cm": 50, "weight_kg": 100},
+            {"id": "B", "desc": "big-b", "qty": 1, "L_cm": 100, "W_cm": 100, "H_cm": 50, "weight_kg": 100},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    fr_spec = ContainerSpec(
+        type="FR",
+        category="SPECIAL",
+        inner_L_cm=Decimal("100"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("120"),
+        max_payload_kg=Decimal("1000"),
+    )
+    result = pack_pieces(fr_spec, pieces)
+    placed = [pl for load in result.loads for pl in load.placements]
+    assert all(pl.placed_z_cm == Decimal("0") for pl in placed)
+
+
+def test_fr_rejects_small_m3_by_default_and_allows_exception_with_flag():
+    df = pd.DataFrame(
+        [
+            {"id": "S", "desc": "small", "qty": 1, "L_cm": 100, "W_cm": 100, "H_cm": 20, "weight_kg": 100},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    fr_spec = ContainerSpec(
+        type="FR",
+        category="SPECIAL",
+        inner_L_cm=Decimal("200"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("200"),
+        max_payload_kg=Decimal("1000"),
+    )
+
+    default_result = pack_pieces(fr_spec, pieces)
+    default_placed = [pl for load in default_result.loads for pl in load.placements]
+    assert len(default_placed) == 0
+    assert len(default_result.unplaced) == 1
+
+    exception_constraints = PackingConstraints(allow_fr_small_m3_exception=True)
+    exception_result = pack_pieces(fr_spec, pieces, constraints=exception_constraints)
+    exception_placed = [pl for load in exception_result.loads for pl in load.placements]
+    assert len(exception_placed) == 1
+    assert exception_placed[0].fr_exception_loaded is True

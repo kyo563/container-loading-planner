@@ -77,6 +77,7 @@ def build_placement_rows(
                 "orient_W_cm": placement.orient_W_cm,
                 "orient_H_cm": placement.orient_H_cm,
                 "rotation_key": placement.rotation_key,
+                "fr_exception_loaded": placement.fr_exception_loaded,
                 "oog_flag": oog.oog_flag if oog else False,
                 "oog_ref_type": oog.oog_ref_type if oog else "",
                 "oog_over_L_cm": oog.over_L_cm if oog else Decimal("0"),

@@ -146,6 +146,13 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
         file_name=f"{title_prefix.lower()}_placements.csv",
         use_container_width=True,
     )
+    if not df.empty and "fr_exception_loaded" in df.columns:
+        fr_exceptions = df[df["fr_exception_loaded"] == True]
+        if not fr_exceptions.empty:
+            st.warning(
+                "FR例外積載あり: 本来は m3<=2 の貨物はFR対象外です。"
+                f"例外として {len(fr_exceptions)} 件を積載しました。"
+            )
 
     st.subheader("積載不可貨物 (unplaced)")
     if result.unplaced:

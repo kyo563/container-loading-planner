@@ -73,6 +73,7 @@ class Placement:
     orient_W_cm: Decimal
     orient_H_cm: Decimal
     rotation_key: str
+    fr_exception_loaded: bool = False
 
 
 @dataclass
@@ -116,6 +117,7 @@ class PackResult:
 class PackingConstraints:
     max_cg_offset_x_pct: Optional[Decimal] = None
     max_cg_offset_y_pct: Optional[Decimal] = None
+    allow_fr_small_m3_exception: bool = False
 
 
 @dataclass

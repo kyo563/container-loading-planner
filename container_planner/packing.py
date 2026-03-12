@@ -93,6 +93,11 @@ class ShelfPacker:
         return x_ok and y_ok
 
     def _can_place_with_constraints(self, piece: Piece, orientation: Orientation) -> bool:
+        if self.spec.type == "FR":
+            if self.cur_z > 0:
+                return False
+            if piece.m3 <= Decimal("2") and not self.constraints.allow_fr_small_m3_exception:
+                return False
         if self._is_incompatible(piece):
             return False
         payload = self.spec.max_payload_kg
@@ -151,6 +156,11 @@ class ShelfPacker:
                     orient_W_cm=orientation.W_cm,
                     orient_H_cm=orientation.H_cm,
                     rotation_key=orientation.rotation_key,
+                    fr_exception_loaded=(
+                        self.spec.type == "FR"
+                        and piece.m3 <= Decimal("2")
+                        and self.constraints.allow_fr_small_m3_exception
+                    ),
                 )
                 self.loads[-1].placements.append(placement)
                 self.cur_x += orientation.L_cm
