@@ -125,7 +125,7 @@ def test_constraints_can_make_piece_unplaced():
     assert len(result.unplaced) >= 1
 
 
-def test_fixed_priority_prefers_40hc_when_same_container_count():
+def test_fixed_priority_prefers_40gp_when_same_container_count():
     df = pd.DataFrame(
         [
             {"id": "A", "desc": "cargo-a", "qty": 1, "L_cm": 180, "W_cm": 90, "H_cm": 90, "weight_kg": 100},
@@ -152,7 +152,8 @@ def test_fixed_priority_prefers_40hc_when_same_container_count():
         "FIXED_PRIORITY",
         "SINGLE_TYPE",
     )
-    assert result.summary_by_type == {"40HC": 1}
+    assert result.summary_by_type == {"40GP": 1}
+    assert "40GP推奨: 40HCと同等収容（同本数）" in result.decision_reasons
 
 
 def test_fixed_priority_uses_20gp_for_residual_after_40hc():
@@ -184,6 +185,7 @@ def test_fixed_priority_uses_20gp_for_residual_after_40hc():
     )
     assert result.summary_by_type == {"40HC": 1, "20GP": 1}
     assert len(result.unplaced) == 0
+    assert "20GP採用: 40HC採用後の残貨物処理" in result.decision_reasons
 
 
 def test_recommend_special_container_h_only_heavy_is_fr():

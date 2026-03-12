@@ -183,6 +183,7 @@ def _read_cargo_uploaded_file(uploaded_file) -> pd.DataFrame:
 
 def _render_result_block(result, order_map, package_lookup, title_prefix: str):
     special_counts, special_reasons = summarize_special_container_needs(result.oog_results)
+    decision_reasons = getattr(result, "decision_reasons", [])
     oog_lookup = {piece.piece_id: oog for piece, oog in result.oog_results}
     df = build_placement_rows(
         result.placements,
@@ -194,6 +195,10 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
     )
 
     st.subheader(f"{title_prefix} 配置一覧")
+    if decision_reasons:
+        st.markdown("**判定根拠**")
+        for reason in decision_reasons:
+            st.write(f"- {reason}")
     st.dataframe(df, use_container_width=True)
     st.download_button(
         f"{title_prefix} 配置CSVダウンロード",
@@ -307,6 +312,21 @@ with st.sidebar:
     st.subheader("追加制約")
     max_cg_offset_x_pct = st.number_input("重心X偏差上限(%)", min_value=0.0, max_value=100.0, value=100.0)
     max_cg_offset_y_pct = st.number_input("重心Y偏差上限(%)", min_value=0.0, max_value=100.0, value=100.0)
+    st.subheader("FIXED_PRIORITY設定")
+    small_lot_threshold_pieces = st.number_input(
+        "小口閾値（piece数）",
+        min_value=0,
+        max_value=1000,
+        value=2,
+        step=1,
+    )
+    small_lot_threshold_m3 = st.number_input(
+        "小口閾値（m3）",
+        min_value=0.0,
+        max_value=100000.0,
+        value=0.0,
+        help="0の場合はm3閾値を無効化します。",
+    )
 
 if "cargo_df" not in st.session_state:
     st.session_state["cargo_df"] = _empty_cargo_df()
@@ -614,6 +634,8 @@ with main_tab:
                     "SINGLE_TYPE",
                     constraints,
                     special_specs,
+                    int(small_lot_threshold_pieces),
+                    Decimal(str(small_lot_threshold_m3)) if small_lot_threshold_m3 > 0 else None,
                 )
 
                 st.subheader("推奨本数")
