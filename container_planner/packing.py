@@ -8,6 +8,9 @@ from container_planner.oog import choose_orientation
 
 
 class ShelfPacker:
+    WIDTH_CLEARANCE_CM = Decimal("1")
+    HEIGHT_CLEARANCE_CM = Decimal("3")
+
     def __init__(self, spec: ContainerSpec, constraints: PackingConstraints | None = None):
         if spec.inner_L_cm is None or spec.inner_W_cm is None or spec.inner_H_cm is None:
             raise ValueError("STANDARDコンテナの内寸が必要です")
@@ -25,10 +28,12 @@ class ShelfPacker:
         self.layer_height = Decimal("0")
 
     def _fits(self, orientation: Orientation) -> bool:
+        remaining_w = self.spec.inner_W_cm - (self.cur_y + orientation.W_cm)
+        remaining_h = self.spec.inner_H_cm - (self.cur_z + orientation.H_cm)
         return (
             self.cur_x + orientation.L_cm <= self.spec.inner_L_cm
-            and self.cur_y + orientation.W_cm <= self.spec.inner_W_cm
-            and self.cur_z + orientation.H_cm <= self.spec.inner_H_cm
+            and remaining_w >= self.WIDTH_CLEARANCE_CM
+            and remaining_h >= self.HEIGHT_CLEARANCE_CM
         )
 
     def _start_new_row(self):

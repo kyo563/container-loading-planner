@@ -41,6 +41,8 @@ containers:
     inner_L_cm: 589
     inner_W_cm: 235
     inner_H_cm: 239
+    door_W_cm: 234
+    door_H_cm: 228
     max_payload_kg: 28200
     cost: 1.0
   - type: 40GP
@@ -48,6 +50,8 @@ containers:
     inner_L_cm: 1203
     inner_W_cm: 235
     inner_H_cm: 239
+    door_W_cm: 234
+    door_H_cm: 228
     max_payload_kg: 26700
     cost: 1.7
   - type: 40HC
@@ -55,6 +59,8 @@ containers:
     inner_L_cm: 1203
     inner_W_cm: 235
     inner_H_cm: 269
+    door_W_cm: 234
+    door_H_cm: 258
     max_payload_kg: 26600
     cost: 1.9
   - type: OT
@@ -72,6 +78,8 @@ containers:
     inner_L_cm: 1150
     inner_W_cm: 228
     inner_H_cm: 220
+    door_W_cm: 228
+    door_H_cm: 218
     max_payload_kg: 27500
 """.strip()
 
@@ -97,6 +105,8 @@ def _parse_container_specs(containers_yaml: str):
                 inner_L_cm=_to_decimal(item.get("inner_L_cm")),
                 inner_W_cm=_to_decimal(item.get("inner_W_cm")),
                 inner_H_cm=_to_decimal(item.get("inner_H_cm")),
+                door_W_cm=_to_decimal(item.get("door_W_cm")),
+                door_H_cm=_to_decimal(item.get("door_H_cm")),
                 deck_L_cm=_to_decimal(item.get("deck_L_cm")),
                 deck_W_cm=_to_decimal(item.get("deck_W_cm")),
                 max_payload_kg=_to_decimal(item.get("max_payload_kg")),
@@ -164,6 +174,21 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
             ]
         )
         st.dataframe(unplaced_df, use_container_width=True)
+
+        door_issue_rows = []
+        for piece in result.unplaced:
+            oog = oog_lookup.get(piece.piece_id)
+            if oog and oog.door_check_applied and not oog.door_passable:
+                door_issue_rows.append(
+                    {
+                        "piece_id": piece.piece_id,
+                        "desc": piece.desc,
+                        "door_reason": oog.door_reason,
+                    }
+                )
+        if door_issue_rows:
+            st.warning("入口通過不可の貨物があります。")
+            st.dataframe(pd.DataFrame(door_issue_rows), use_container_width=True)
     else:
         st.success("積載不可貨物はありません")
 
