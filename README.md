@@ -76,6 +76,7 @@ UI は Streamlit、業務ロジックは `container_planner/` に分離されて
 │   ├── advisory.py             # 特殊コンテナ推奨・陸送要件アドバイス
 │   ├── naccs.py                # 荷姿マスタ読込・荷姿コード変換
 │   ├── reporting.py            # 画面/CSV出力用の配置行データ作成
+│   ├── excel_export.py         # Excel帳票（Summary/Placements/Layout）出力
 │   └── pdf_export.py           # 簡易PDF（テキストベース）出力
 ├── data/                       # サンプルCSV/YAML、CSVテンプレート
 ├── docs/basic_design.md        # 基本設計
@@ -137,7 +138,8 @@ UI は Streamlit、業務ロジックは `container_planner/` に分離されて
 - ダウンロード
   - 配置CSV
   - 本数見積CSV / 確定本数CSV
-  - 簡易バンニングPDF（文字ベース）
+  - Excel帳票（主帳票: Summary / Placements / Layout）
+  - 簡易バンニングPDF（文字ベース、注記用途）
 
 ---
 
@@ -151,7 +153,7 @@ UI は Streamlit、業務ロジックは `container_planner/` に分離されて
 - OOG判定結果の確認（超過寸法・推奨特殊コンテナ）
 - 偏荷重や重心偏差の確認
 - 荷姿マスタで package text を NACCSコードにマッピング
-- 配置結果を CSV/PDF として出力
+- 配置結果を CSV/Excel（主帳票）/PDF（注記用途）として出力
 
 ---
 
