@@ -192,6 +192,7 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
         order_map,
         package_lookup,
         getattr(result, "special_reason_by_piece", special_reasons),
+        getattr(result, "weight_audit_by_container", {}),
     )
 
     st.subheader(f"{title_prefix} 配置一覧")
@@ -681,6 +682,7 @@ with main_tab:
                 remaining = list(pieces)
                 placements = []
                 bias_by_container = {}
+                weight_audit_by_container = {}
                 for spec, count in standard_count_specs:
                     if not remaining:
                         break
@@ -694,19 +696,21 @@ with main_tab:
                     )
                     placements.extend(result.placements)
                     bias_by_container.update(result.bias_by_container)
+                    weight_audit_by_container.update(getattr(result, "weight_audit_by_container", {}))
                     remaining = result.unplaced
 
                 oog_results = [(piece, evaluate_oog(piece, ref_spec)) for piece in pieces]
 
                 class CombinedResult:
-                    def __init__(self, placements, unplaced, bias_by_container, oog_results):
+                    def __init__(self, placements, unplaced, bias_by_container, weight_audit_by_container, oog_results):
                         self.placements = placements
                         self.unplaced = unplaced
                         self.bias_by_container = bias_by_container
+                        self.weight_audit_by_container = weight_audit_by_container
                         self.oog_results = oog_results
                         self.special_reason_by_piece = {}
 
-                combined = CombinedResult(placements, remaining, bias_by_container, oog_results)
+                combined = CombinedResult(placements, remaining, bias_by_container, weight_audit_by_container, oog_results)
                 _render_result_block(combined, order_map, package_lookup, title_prefix="Loading")
 
                 selected_counts = {k: int(v) for k, v in counts_by_type.items() if int(v) > 0}
@@ -727,6 +731,7 @@ with main_tab:
                     order_map,
                     package_lookup,
                     combined.special_reason_by_piece,
+                    combined.weight_audit_by_container,
                 )
                 lines = [
                     "Vanning Plan",

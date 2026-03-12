@@ -5,7 +5,7 @@ from typing import Dict, Iterable
 
 import pandas as pd
 
-from container_planner.models import BiasMetrics, OogResult, Placement
+from container_planner.models import BiasMetrics, OogResult, Placement, WeightAuditMetrics
 from container_planner.naccs import NaccsResult
 
 CIRCLED = {
@@ -44,6 +44,7 @@ def build_placement_rows(
     order_map: Dict[str, int],
     package_lookup: Dict[str, NaccsResult],
     special_reason_lookup: Dict[str, str] | None = None,
+    weight_audit_lookup: Dict[tuple, WeightAuditMetrics] | None = None,
 ) -> pd.DataFrame:
     rows = []
     for placement in placements:
@@ -52,6 +53,7 @@ def build_placement_rows(
         bias = bias_lookup.get((placement.container_type, placement.container_index))
         package = package_lookup.get(piece.piece_id)
         reason = (special_reason_lookup or {}).get(piece.piece_id, "")
+        weight_audit = (weight_audit_lookup or {}).get((placement.container_type, placement.container_index))
         rows.append(
             {
                 "container_label": label_container(placement.container_type, placement.container_index),
@@ -102,6 +104,12 @@ def build_placement_rows(
                 "bias_offset_y_pct": bias.offset_y_pct if bias else Decimal("0"),
                 "bias_front_rear_diff_pct": bias.front_rear_diff_pct if bias else Decimal("0"),
                 "bias_left_right_diff_pct": bias.left_right_diff_pct if bias else Decimal("0"),
+                "weight_alert": weight_audit.weight_alert if weight_audit else False,
+                "weight_alert_message": weight_audit.weight_alert_message if weight_audit else "",
+                "container_total_weight_kg": weight_audit.total_weight_kg if weight_audit else Decimal("0"),
+                "payload_ratio_pct": weight_audit.payload_ratio_pct if weight_audit else Decimal("0"),
+                "vehicle_limit_ratio_pct": weight_audit.vehicle_limit_ratio_pct if weight_audit else Decimal("0"),
+                "weight_concentration_top_n_ratio_pct": weight_audit.concentration_top_n_ratio_pct if weight_audit else Decimal("0"),
             }
         )
     df = pd.DataFrame(rows)

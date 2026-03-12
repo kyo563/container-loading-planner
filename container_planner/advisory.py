@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from decimal import Decimal
 
-from container_planner.models import OogResult, Piece, Placement
+from container_planner.models import OogResult, Piece, Placement, WeightAuditMetrics
 
 TARE_WEIGHT_KG = {
     "20GP": Decimal("2300"),
@@ -18,15 +18,18 @@ RF_KEYWORDS = {"reefer", "refrigerated", "frozen", "cold", "冷凍", "冷蔵", "
 FR_MIN_VOLUME_M3 = Decimal("2")
 
 
+
 def _requires_rf(piece: Piece) -> bool:
     text = f"{piece.desc} {piece.package_text}".lower()
     return any(keyword.lower() in text for keyword in RF_KEYWORDS)
+
 
 
 def _is_fr_candidate(piece: Piece, oog: OogResult) -> bool:
     if oog.over_W_cm <= 0 and oog.over_L_cm <= 0:
         return False
     return piece.m3 > FR_MIN_VOLUME_M3
+
 
 
 def recommend_special_container(piece: Piece, oog: OogResult) -> tuple[str, str]:
@@ -44,6 +47,7 @@ def recommend_special_container(piece: Piece, oog: OogResult) -> tuple[str, str]
     return "", ""
 
 
+
 def summarize_special_container_needs(oog_results: list[tuple[Piece, OogResult]]) -> tuple[dict[str, int], dict[str, str]]:
     counter: Counter[str] = Counter()
     reasons: dict[str, str] = {}
@@ -56,6 +60,7 @@ def summarize_special_container_needs(oog_results: list[tuple[Piece, OogResult]]
         counter[container_type] += 1
         reasons[piece.piece_id] = reason
     return dict(counter), reasons
+
 
 
 def estimate_gross_weight_by_container(placements: list[Placement], special_counts: dict[str, int]) -> dict[str, Decimal]:
@@ -75,6 +80,60 @@ def estimate_gross_weight_by_container(placements: list[Placement], special_coun
             key = f"{ctype}-S{idx}"
             result[key] = tare
     return result
+
+
+
+def _calc_ratio_pct(value: Decimal, limit: Decimal | None) -> Decimal:
+    if limit is None or limit <= 0:
+        return Decimal("0")
+    return (value / limit) * Decimal("100")
+
+
+
+def build_weight_audit_metrics(
+    placements: list[Placement],
+    payload_limit_kg: Decimal | None,
+    vehicle_limit_kg: Decimal | None,
+    payload_near_threshold_pct: Decimal,
+    top_n: int,
+    concentration_warn_threshold_pct: Decimal,
+) -> WeightAuditMetrics:
+    total_weight_kg = sum((placement.piece.weight_kg for placement in placements), Decimal("0"))
+    sorted_weights = sorted((placement.piece.weight_kg for placement in placements), reverse=True)
+    top_weights = sorted_weights[: max(top_n, 1)]
+    top_total = sum(top_weights, Decimal("0"))
+    concentration_ratio_pct = _calc_ratio_pct(top_total, total_weight_kg)
+    payload_ratio_pct = _calc_ratio_pct(total_weight_kg, payload_limit_kg)
+    vehicle_ratio_pct = _calc_ratio_pct(total_weight_kg, vehicle_limit_kg)
+
+    messages: list[str] = []
+    if payload_limit_kg is not None and payload_limit_kg > 0:
+        if payload_ratio_pct > Decimal("100"):
+            messages.append(f"最大積載重量超過: {total_weight_kg}kg / {payload_limit_kg}kg")
+        elif payload_ratio_pct >= payload_near_threshold_pct:
+            messages.append(
+                f"最大積載重量に近接: {payload_ratio_pct.quantize(Decimal('0.1'))}%（閾値 {payload_near_threshold_pct}%）"
+            )
+
+    if vehicle_limit_kg is not None and vehicle_limit_kg > 0 and total_weight_kg > vehicle_limit_kg:
+        messages.append(f"車両重量制限超過: {total_weight_kg}kg / {vehicle_limit_kg}kg")
+
+    if concentration_ratio_pct >= concentration_warn_threshold_pct and len(sorted_weights) >= 2:
+        messages.append(
+            f"重量貨物集中度高: 上位{max(top_n, 1)}件で{concentration_ratio_pct.quantize(Decimal('0.1'))}%を占有。分散配置を推奨"
+        )
+
+    return WeightAuditMetrics(
+        total_weight_kg=total_weight_kg,
+        vehicle_limit_kg=vehicle_limit_kg,
+        vehicle_limit_ratio_pct=vehicle_ratio_pct,
+        payload_limit_kg=payload_limit_kg,
+        payload_ratio_pct=payload_ratio_pct,
+        concentration_top_n_ratio_pct=concentration_ratio_pct,
+        weight_alert=bool(messages),
+        weight_alert_message=" / ".join(messages),
+    )
+
 
 
 def suggest_truck_requirement(gross_kg: Decimal, max_over_w_cm: Decimal, max_over_h_cm: Decimal) -> str:
