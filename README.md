@@ -193,6 +193,14 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+AIダブルチェック機能を使う場合は、起動前に以下を設定してください。
+
+```bash
+export OPENAI_API_KEY="<your-api-key>"
+# 任意（未指定時は gpt-4o-mini）
+export OPENAI_MODEL="gpt-4o-mini"
+```
+
 起動後、以下の順で操作すると確認しやすいです。
 
 1. 「データメンテナンス」でサンプル荷姿マスタ/コンテナ仕様を反映
@@ -215,7 +223,16 @@ python -m compileall app.py container_planner
 
 ---
 
-## 8. 補足ドキュメント
+## 8. AIダブルチェック機能の注意
+
+- サイドバーの「AIダブルチェックを有効化」をONにした場合のみ、**集計結果**と**配置サマリ**がLLM APIへ送信されます。
+- APIキー未設定時は機能が無効化され、UIで設定手順が表示されます。
+- 外部APIへの送信を伴うため、**個人情報・機密情報・契約上持ち出し禁止の情報**は入力しないでください。
+- AIの出力は補助的な提案です。最終判断は必ず実務担当者が行ってください。
+
+---
+
+## 9. 補足ドキュメント
 
 - 基本設計: `docs/basic_design.md`
 - サンプル入力:
