@@ -4,6 +4,8 @@ containers:
     inner_L_cm: 589
     inner_W_cm: 235
     inner_H_cm: 239
+    door_W_cm: 234
+    door_H_cm: 228
     max_payload_kg: 28200
     cost: 1
   - type: 40GP
@@ -11,6 +13,8 @@ containers:
     inner_L_cm: 1203
     inner_W_cm: 235
     inner_H_cm: 239
+    door_W_cm: 234
+    door_H_cm: 228
     max_payload_kg: 26700
     cost: 1.7
   - type: 40HC
@@ -18,6 +22,8 @@ containers:
     inner_L_cm: 1203
     inner_W_cm: 235
     inner_H_cm: 269
+    door_W_cm: 234
+    door_H_cm: 258
     max_payload_kg: 26600
     cost: 1.9
   - type: OT
@@ -35,4 +41,6 @@ containers:
     inner_L_cm: 1150
     inner_W_cm: 228
     inner_H_cm: 220
+    door_W_cm: 228
+    door_H_cm: 218
     max_payload_kg: 27500

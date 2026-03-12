@@ -46,6 +46,8 @@ class ContainerSpec:
     inner_L_cm: Optional[Decimal] = None
     inner_W_cm: Optional[Decimal] = None
     inner_H_cm: Optional[Decimal] = None
+    door_W_cm: Optional[Decimal] = None
+    door_H_cm: Optional[Decimal] = None
     deck_L_cm: Optional[Decimal] = None
     deck_W_cm: Optional[Decimal] = None
     max_payload_kg: Optional[Decimal] = None
@@ -87,6 +89,11 @@ class OogResult:
     protrude_W_m3: Decimal
     protrude_H_m3: Decimal
     chosen_orientation: Orientation
+    door_passable: bool = True
+    door_check_applied: bool = False
+    door_over_W_cm: Decimal = Decimal("0")
+    door_over_H_cm: Decimal = Decimal("0")
+    door_reason: str = ""
 
 
 @dataclass

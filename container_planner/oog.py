@@ -59,6 +59,33 @@ def evaluate_oog(piece: Piece, ref: ContainerSpec) -> OogResult:
     protrude_L = ceil_m3((over_L * orientation.W_cm * orientation.H_cm) / Decimal("1000000"))
     protrude_W = ceil_m3((orientation.L_cm * over_W * orientation.H_cm) / Decimal("1000000"))
     protrude_H = ceil_m3((orientation.L_cm * orientation.W_cm * over_H) / Decimal("1000000"))
+
+    door_check_applied = ref.door_W_cm is not None and ref.door_H_cm is not None
+    door_passable = True
+    door_over_w = Decimal("0")
+    door_over_h = Decimal("0")
+    door_reason = ""
+    if door_check_applied:
+        best_door = None
+        for candidate in choose_orientation(piece):
+            over_door_w = max(Decimal("0"), candidate.W_cm - ref.door_W_cm)
+            over_door_h = max(Decimal("0"), candidate.H_cm - ref.door_H_cm)
+            score = over_door_w + over_door_h
+            if best_door is None or score < best_door[0]:
+                best_door = (score, over_door_w, over_door_h)
+
+        _, door_over_w, door_over_h = best_door
+        door_over_w = ceil_cm(door_over_w)
+        door_over_h = ceil_cm(door_over_h)
+        door_passable = door_over_w == 0 and door_over_h == 0
+        if not door_passable:
+            reasons = []
+            if door_over_w > 0:
+                reasons.append(f"入口幅超過 {door_over_w}cm")
+            if door_over_h > 0:
+                reasons.append(f"入口高さ超過 {door_over_h}cm")
+            door_reason = " / ".join(reasons)
+
     return OogResult(
         oog_flag=oog_flag,
         oog_ref_type=ref.type,
@@ -70,4 +97,9 @@ def evaluate_oog(piece: Piece, ref: ContainerSpec) -> OogResult:
         protrude_W_m3=protrude_W,
         protrude_H_m3=protrude_H,
         chosen_orientation=orientation,
+        door_passable=door_passable,
+        door_check_applied=door_check_applied,
+        door_over_W_cm=door_over_w,
+        door_over_H_cm=door_over_h,
+        door_reason=door_reason,
     )

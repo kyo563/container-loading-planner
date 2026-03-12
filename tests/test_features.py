@@ -5,7 +5,9 @@ import pandas as pd
 from container_planner.io import CargoInputError, normalize_cargo_rows, expand_pieces
 from container_planner.advisory import recommend_special_container
 from container_planner.models import ContainerSpec, OogResult, Orientation, PackingConstraints
+from container_planner.oog import evaluate_oog
 from container_planner.planner import estimate
+from container_planner.packing import pack_pieces
 
 
 def _base_spec(container_type: str, cost: str) -> ContainerSpec:
@@ -71,13 +73,21 @@ def test_multi_type_and_unplaced_visibility_data():
         ]
     )
     pieces = expand_pieces(normalize_cargo_rows(df))
-    spec_20 = _base_spec("20GP", "100")
+    spec_20 = ContainerSpec(
+        type="20GP",
+        category="STANDARD",
+        inner_L_cm=Decimal("200"),
+        inner_W_cm=Decimal("101"),
+        inner_H_cm=Decimal("103"),
+        max_payload_kg=Decimal("1000"),
+        cost=Decimal("100"),
+    )
     spec_40 = ContainerSpec(
         type="40HC",
         category="STANDARD",
         inner_L_cm=Decimal("400"),
-        inner_W_cm=Decimal("100"),
-        inner_H_cm=Decimal("100"),
+        inner_W_cm=Decimal("101"),
+        inner_H_cm=Decimal("103"),
         max_payload_kg=Decimal("2000"),
         cost=Decimal("180"),
     )
@@ -167,3 +177,72 @@ def test_recommend_special_container_h_only_heavy_is_fr():
         ),
     )
     assert recommend_special_container(piece, oog) == "FR"
+
+
+def test_evaluate_oog_detects_door_not_passable_with_reason():
+    piece = expand_pieces(
+        normalize_cargo_rows(
+            pd.DataFrame([
+                {"id": "A", "desc": "wide", "qty": 1, "L_cm": 130, "W_cm": 120, "H_cm": 119, "weight_kg": 100}
+            ])
+        )
+    )[0]
+    ref_spec = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("1200"),
+        inner_W_cm=Decimal("235"),
+        inner_H_cm=Decimal("269"),
+        door_W_cm=Decimal("110"),
+        door_H_cm=Decimal("118"),
+    )
+
+    oog = evaluate_oog(piece, ref_spec)
+
+    assert oog.door_check_applied is True
+    assert oog.door_passable is False
+    assert oog.door_over_W_cm == Decimal("10")
+    assert "入口幅超過" in oog.door_reason
+
+
+def test_evaluate_oog_skips_door_check_when_door_size_missing():
+    piece = expand_pieces(
+        normalize_cargo_rows(
+            pd.DataFrame([
+                {"id": "A", "desc": "cargo", "qty": 1, "L_cm": 100, "W_cm": 100, "H_cm": 100, "weight_kg": 100}
+            ])
+        )
+    )[0]
+    ref_spec = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("1200"),
+        inner_W_cm=Decimal("235"),
+        inner_H_cm=Decimal("269"),
+    )
+
+    oog = evaluate_oog(piece, ref_spec)
+
+    assert oog.door_check_applied is False
+    assert oog.door_passable is True
+
+
+def test_packing_requires_width_and_height_clearance():
+    piece = expand_pieces(
+        normalize_cargo_rows(
+            pd.DataFrame([
+                {"id": "A", "desc": "tight-fit", "qty": 1, "L_cm": 100, "W_cm": 99, "H_cm": 98, "weight_kg": 100}
+            ])
+        )
+    )[0]
+    spec = ContainerSpec(
+        type="20GP",
+        category="STANDARD",
+        inner_L_cm=Decimal("200"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("100"),
+    )
+
+    result = pack_pieces(spec, [piece])
+
+    assert len(result.unplaced) == 1
