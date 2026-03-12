@@ -28,6 +28,7 @@ from container_planner.advisory import (
     suggest_truck_requirement,
     summarize_special_container_needs,
 )
+from container_planner.ai_review import build_ai_review_prompt, load_ai_review_config, request_ai_review
 from container_planner.models import ContainerSpec, PackingConstraints
 from container_planner.oog import evaluate_oog, summarize_oog_overages
 from container_planner.excel_export import build_excel_report
@@ -307,8 +308,65 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
     st.caption(f"OW(each) 合計: {oog_totals['OW_each']} cm / OH 合計: {oog_totals['OH']} cm")
 
 
+def _render_ai_review_section(summary_df: pd.DataFrame, placement_df: pd.DataFrame, enabled: bool, api_ready: bool):
+    st.subheader("AIダブルチェック")
+    if not api_ready:
+        st.info(
+            "AIレビューを使うには APIキーが必要です。\n"
+            "1) 環境変数 `OPENAI_API_KEY` を設定\n"
+            "2) 必要に応じて `OPENAI_MODEL`（既定: gpt-4o-mini）を設定\n"
+            "3) アプリを再起動"
+        )
+        return
+    if not enabled:
+        st.caption("サイドバーで「AIダブルチェックを有効化」をONにするとレビューを実行します。")
+        return
+
+    config = load_ai_review_config()
+    if not config:
+        st.warning("APIキーが取得できないためAIレビューを実行できません。")
+        return
+
+    prompt = build_ai_review_prompt(summary_df, placement_df)
+    with st.spinner("AIレビューを実行中..."):
+        try:
+            ai_result = request_ai_review(config, prompt)
+        except Exception as exc:  # noqa: BLE001
+            st.error(str(exc))
+            return
+
+    caution_points = ai_result.caution_points or ["特記事項なし"]
+    check_items = ai_result.check_items or ["特記事項なし"]
+    improvement_suggestions = ai_result.improvement_suggestions or ["特記事項なし"]
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("**注意点**")
+        for item in caution_points:
+            st.write(f"- {item}")
+    with col2:
+        st.markdown("**確認事項**")
+        for item in check_items:
+            st.write(f"- {item}")
+    with col3:
+        st.markdown("**改善提案**")
+        for item in improvement_suggestions:
+            st.write(f"- {item}")
+
+    st.caption("※ 外部APIへ送信されるため、個人情報・機密情報を含めないでください。")
+
+
 with st.sidebar:
     st.header("共通設定")
+    ai_config_ready = load_ai_review_config() is not None
+    ai_double_check_enabled = st.checkbox(
+        "AIダブルチェックを有効化",
+        value=False,
+        disabled=not ai_config_ready,
+        help="結果サマリをLLM APIに送って注意点を確認します。",
+    )
+    if not ai_config_ready:
+        st.caption("APIキー未設定のため無効です。`OPENAI_API_KEY` を環境変数に設定してください。")
     bias_threshold = st.number_input(
         "偏荷重警告閾値(%)",
         min_value=0.0,
@@ -678,6 +736,13 @@ with main_tab:
                 st.subheader("container KPI表（Estimate）")
                 st.dataframe(estimate_kpi_df, use_container_width=True)
 
+                _render_ai_review_section(
+                    summary_df,
+                    estimate_plan_df,
+                    enabled=ai_double_check_enabled,
+                    api_ready=ai_config_ready,
+                )
+
                 _render_result_block(result, order_map, package_lookup, title_prefix="Estimate")
 
     else:
@@ -759,6 +824,13 @@ with main_tab:
                 loading_kpi_df = build_container_kpi_rows(plan_df)
                 st.subheader("container KPI表（Loading）")
                 st.dataframe(loading_kpi_df, use_container_width=True)
+
+                _render_ai_review_section(
+                    summary_df,
+                    plan_df,
+                    enabled=ai_double_check_enabled,
+                    api_ready=ai_config_ready,
+                )
 
                 lines = [
                     "Vanning Plan",
