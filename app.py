@@ -28,7 +28,7 @@ from container_planner.advisory import (
     summarize_special_container_needs,
 )
 from container_planner.models import ContainerSpec, PackingConstraints
-from container_planner.oog import evaluate_oog
+from container_planner.oog import evaluate_oog, summarize_oog_overages
 from container_planner.excel_export import build_excel_report
 from container_planner.pdf_export import build_text_pdf
 
@@ -182,9 +182,16 @@ def _read_cargo_uploaded_file(uploaded_file) -> pd.DataFrame:
 
 
 def _render_result_block(result, order_map, package_lookup, title_prefix: str):
-    special_counts = summarize_special_container_needs(result.oog_results)
+    special_counts, special_reasons = summarize_special_container_needs(result.oog_results)
     oog_lookup = {piece.piece_id: oog for piece, oog in result.oog_results}
-    df = build_placement_rows(result.placements, oog_lookup, result.bias_by_container, order_map, package_lookup)
+    df = build_placement_rows(
+        result.placements,
+        oog_lookup,
+        result.bias_by_container,
+        order_map,
+        package_lookup,
+        getattr(result, "special_reason_by_piece", special_reasons),
+    )
 
     st.subheader(f"{title_prefix} 配置一覧")
     st.dataframe(df, use_container_width=True)
@@ -270,6 +277,7 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
             )
 
     gross_map = estimate_gross_weight_by_container(result.placements, special_counts)
+    oog_totals = summarize_oog_overages(result.oog_results)
     gross_df = pd.DataFrame(gross_map.items(), columns=["container", "estimated_gross_kg"])
     st.subheader("推定トータルグロスウェイト")
     st.dataframe(gross_df, use_container_width=True)
@@ -279,6 +287,7 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
     total_gross = sum(gross_map.values(), Decimal("0"))
     advice = suggest_truck_requirement(total_gross, max_over_w, max_over_h)
     st.info(f"国内配送要件提案: {advice}")
+    st.caption(f"OW(each) 合計: {oog_totals['OW_each']} cm / OH 合計: {oog_totals['OH']} cm")
 
 
 with st.sidebar:
@@ -361,6 +370,7 @@ if containers_yaml:
         st.error(f"containers.yaml 読み込みに失敗しました: {exc}")
 
 standard_specs = [spec for spec in container_specs if spec.category == "STANDARD"]
+special_specs = [spec for spec in container_specs if spec.category == "SPECIAL"]
 if not standard_specs:
     st.warning("STANDARDコンテナ仕様がありません。データメンテナンスタブでコンテナ仕様を確認してください。")
     st.stop()
@@ -603,10 +613,11 @@ with main_tab:
                     "FIXED_PRIORITY",
                     "SINGLE_TYPE",
                     constraints,
+                    special_specs,
                 )
 
                 st.subheader("推奨本数")
-                special_counts = summarize_special_container_needs(result.oog_results)
+                special_counts, _ = summarize_special_container_needs(result.oog_results)
                 summary_df = pd.DataFrame(result.summary_by_type.items(), columns=["type", "count"])
                 if special_counts:
                     summary_df = pd.concat(
@@ -671,6 +682,7 @@ with main_tab:
                         self.unplaced = unplaced
                         self.bias_by_container = bias_by_container
                         self.oog_results = oog_results
+                        self.special_reason_by_piece = {}
 
                 combined = CombinedResult(placements, remaining, bias_by_container, oog_results)
                 _render_result_block(combined, order_map, package_lookup, title_prefix="Loading")
@@ -692,6 +704,7 @@ with main_tab:
                     combined.bias_by_container,
                     order_map,
                     package_lookup,
+                    combined.special_reason_by_piece,
                 )
                 lines = [
                     "Vanning Plan",

@@ -103,3 +103,12 @@ def evaluate_oog(piece: Piece, ref: ContainerSpec) -> OogResult:
         door_over_H_cm=door_over_h,
         door_reason=door_reason,
     )
+
+
+def summarize_oog_overages(oog_results: list[tuple[Piece, OogResult]]) -> dict[str, Decimal]:
+    ow_each = Decimal("0")
+    oh = Decimal("0")
+    for _, oog in oog_results:
+        ow_each += oog.over_W_cm
+        oh += oog.over_H_cm
+    return {"OW_each": ow_each, "OH": oh}

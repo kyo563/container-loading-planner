@@ -43,6 +43,7 @@ def build_placement_rows(
     bias_lookup: Dict[tuple, BiasMetrics],
     order_map: Dict[str, int],
     package_lookup: Dict[str, NaccsResult],
+    special_reason_lookup: Dict[str, str] | None = None,
 ) -> pd.DataFrame:
     rows = []
     for placement in placements:
@@ -50,6 +51,7 @@ def build_placement_rows(
         oog = oog_lookup.get(piece.piece_id)
         bias = bias_lookup.get((placement.container_type, placement.container_index))
         package = package_lookup.get(piece.piece_id)
+        reason = (special_reason_lookup or {}).get(piece.piece_id, "")
         rows.append(
             {
                 "container_label": label_container(placement.container_type, placement.container_index),
@@ -82,6 +84,9 @@ def build_placement_rows(
                 "oog_over_L_cm": oog.over_L_cm if oog else Decimal("0"),
                 "oog_over_W_cm": oog.over_W_cm if oog else Decimal("0"),
                 "oog_over_H_cm": oog.over_H_cm if oog else Decimal("0"),
+                "OW(each)": oog.over_W_cm if oog else Decimal("0"),
+                "OH": oog.over_H_cm if oog else Decimal("0"),
+                "special_container_reason": reason,
                 "oog_suggestion": oog.suggestion if oog else "",
                 "protrude_L_m3": oog.protrude_L_m3 if oog else Decimal("0"),
                 "protrude_W_m3": oog.protrude_W_m3 if oog else Decimal("0"),

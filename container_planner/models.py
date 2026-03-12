@@ -132,6 +132,7 @@ class EstimateResult:
     oog_results: List[tuple[Piece, OogResult]]
     summary_by_type: dict
     bias_by_container: dict
+    special_reason_by_piece: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -140,3 +141,4 @@ class ValidateResult:
     unplaced: List[Piece]
     bias_by_container: dict
     oog_results: List[tuple[Piece, OogResult]]
+    special_reason_by_piece: dict[str, str] = field(default_factory=dict)
