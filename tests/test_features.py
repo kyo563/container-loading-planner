@@ -5,7 +5,7 @@ import pandas as pd
 from container_planner.io import CargoInputError, normalize_cargo_rows, expand_pieces
 from container_planner.advisory import recommend_special_container
 from container_planner.models import ContainerSpec, OogResult, Orientation, PackingConstraints
-from container_planner.oog import evaluate_oog
+from container_planner.oog import evaluate_oog, summarize_oog_overages
 from container_planner.planner import estimate
 from container_planner.packing import pack_pieces
 
@@ -207,7 +207,7 @@ def test_recommend_special_container_h_only_heavy_is_fr():
             rotation_key="LWH",
         ),
     )
-    assert recommend_special_container(piece, oog) == "FR"
+    assert recommend_special_container(piece, oog)[0] == "FR"
 
 
 def test_evaluate_oog_detects_door_not_passable_with_reason():
@@ -277,3 +277,61 @@ def test_packing_requires_width_and_height_clearance():
     result = pack_pieces(spec, [piece])
 
     assert len(result.unplaced) == 1
+
+
+def test_oog_summary_returns_ow_each_and_oh_totals():
+    piece = expand_pieces(
+        normalize_cargo_rows(
+            pd.DataFrame([
+                {"id": "A", "desc": "oog", "qty": 1, "L_cm": 130, "W_cm": 120, "H_cm": 140, "weight_kg": 100}
+            ])
+        )
+    )[0]
+    ref_spec = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("120"),
+        inner_W_cm=Decimal("110"),
+        inner_H_cm=Decimal("130"),
+    )
+    oog = evaluate_oog(piece, ref_spec)
+    summary = summarize_oog_overages([(piece, oog)])
+    assert summary["OW_each"] == oog.over_W_cm
+    assert summary["OH"] == oog.over_H_cm
+
+
+def test_fr_disallows_stacking_and_small_volume_piece():
+    small_piece = expand_pieces(
+        normalize_cargo_rows(
+            pd.DataFrame([
+                {"id": "A", "desc": "small", "qty": 1, "L_cm": 100, "W_cm": 100, "H_cm": 100, "weight_kg": 100}
+            ])
+        )
+    )[0]
+    fr_spec = ContainerSpec(
+        type="FR",
+        category="SPECIAL",
+        inner_L_cm=Decimal("250"),
+        inner_W_cm=Decimal("120"),
+        inner_H_cm=Decimal("250"),
+    )
+    result_small = pack_pieces(fr_spec, [small_piece])
+    assert len(result_small.unplaced) == 1
+
+    bottom = expand_pieces(
+        normalize_cargo_rows(
+            pd.DataFrame([
+                {"id": "B", "desc": "bottom", "qty": 1, "L_cm": 220, "W_cm": 100, "H_cm": 100, "weight_kg": 100}
+            ])
+        )
+    )[0]
+    top = expand_pieces(
+        normalize_cargo_rows(
+            pd.DataFrame([
+                {"id": "C", "desc": "top", "qty": 1, "L_cm": 220, "W_cm": 100, "H_cm": 100, "weight_kg": 100}
+            ])
+        )
+    )[0]
+    result_stack = pack_pieces(fr_spec, [bottom, top])
+    placed_ids = {pl.piece.piece_id for load in result_stack.loads for pl in load.placements}
+    assert len(placed_ids) == 1

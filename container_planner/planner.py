@@ -4,6 +4,7 @@ from collections import Counter
 from decimal import Decimal
 from typing import Iterable
 
+from container_planner.advisory import recommend_special_container
 from container_planner.models import (
     BiasMetrics,
     ContainerLoad,
@@ -26,6 +27,14 @@ def sort_pieces(pieces: Iterable[Piece]) -> list[Piece]:
             p.L_cm * p.W_cm,
             p.weight_kg,
         ),
+        reverse=True,
+    )
+
+
+def sort_pieces_for_special_fill(pieces: Iterable[Piece]) -> list[Piece]:
+    return sorted(
+        pieces,
+        key=lambda p: (p.weight_kg, p.m3),
         reverse=True,
     )
 
@@ -142,6 +151,37 @@ def _pack_with_multi_type(
     return loads, remaining
 
 
+def _pick_standard_spec(standard_specs: list[ContainerSpec], preferred: str) -> ContainerSpec | None:
+    for spec in standard_specs:
+        if spec.type == preferred:
+            return spec
+    return standard_specs[0] if standard_specs else None
+
+
+def _pack_special_and_fill(
+    pieces_by_type: dict[str, list[Piece]],
+    special_specs: dict[str, ContainerSpec],
+    in_gauge: list[Piece],
+    constraints: PackingConstraints | None,
+) -> tuple[list[ContainerLoad], list[Piece]]:
+    special_loads: list[ContainerLoad] = []
+    remaining_in_gauge = list(in_gauge)
+
+    for container_type, special_pieces in pieces_by_type.items():
+        if not special_pieces:
+            continue
+        spec = special_specs.get(container_type)
+        if spec is None:
+            continue
+        pack_target = sort_pieces(special_pieces) + sort_pieces_for_special_fill(remaining_in_gauge)
+        packed = pack_pieces(spec, pack_target, constraints=constraints)
+        special_loads.extend(packed.loads)
+        placed_ids = {pl.piece.piece_id for load in packed.loads for pl in load.placements}
+        remaining_in_gauge = [piece for piece in remaining_in_gauge if piece.piece_id not in placed_ids]
+
+    return special_loads, remaining_in_gauge
+
+
 def estimate(
     pieces: list[Piece],
     standard_specs: list[ContainerSpec],
@@ -150,25 +190,46 @@ def estimate(
     mode: str,
     algorithm: str,
     constraints: PackingConstraints | None = None,
+    special_specs: list[ContainerSpec] | None = None,
 ) -> EstimateResult:
     small_lot_max_pieces = 2
 
     oog_results = []
     in_gauge: list[Piece] = []
+    special_reason_by_piece: dict[str, str] = {}
+    special_piece_ids: set[str] = set()
+    pieces_by_special_type: dict[str, list[Piece]] = {"FR": [], "OT": [], "RF": []}
+    special_spec_map = {spec.type: spec for spec in (special_specs or [])}
+
     for piece in pieces:
         oog = evaluate_oog(piece, ref_spec)
         if oog.oog_flag:
             oog_results.append((piece, oog))
+            special_type, reason = recommend_special_container(piece, oog)
+            if special_type:
+                pieces_by_special_type.setdefault(special_type, []).append(piece)
+                special_piece_ids.add(piece.piece_id)
+                special_reason_by_piece[piece.piece_id] = reason
         else:
             in_gauge.append(piece)
-    in_gauge = sort_pieces(in_gauge)
+
+    special_loads, remaining_in_gauge = _pack_special_and_fill(
+        pieces_by_special_type,
+        special_spec_map,
+        in_gauge,
+        constraints,
+    )
+    in_gauge = sort_pieces(remaining_in_gauge)
+
     best = None
     if mode == "FIXED_PRIORITY":
         priority_order = {"40HC": 0, "40GP": 1, "20GP": 2}
         spec_by_type = {spec.type: spec for spec in standard_specs}
         allow_20gp_single_type = len(in_gauge) <= small_lot_max_pieces
 
-        for spec in standard_specs:
+        ordered_specs = sorted(standard_specs, key=lambda s: priority_order.get(s.type, 99))
+
+        for spec in ordered_specs:
             if spec.type == "20GP" and not allow_20gp_single_type:
                 continue
             loads, unplaced = _pack_with_single_type(spec, in_gauge, constraints=constraints)
@@ -180,7 +241,7 @@ def estimate(
             if best is None or score < best[0]:
                 best = (score, loads, unplaced)
         if best is None:
-            for spec in standard_specs:
+            for spec in ordered_specs:
                 if spec.type == "20GP" and not allow_20gp_single_type:
                     continue
                 loads, unplaced = _pack_with_single_type(spec, in_gauge, constraints=constraints)
@@ -206,7 +267,15 @@ def estimate(
     elif algorithm == "MULTI_TYPE":
         loads, unplaced = _pack_with_multi_type(standard_specs, in_gauge, mode, constraints=constraints)
     else:
-        for spec in standard_specs:
+        prioritized = []
+        preferred = _pick_standard_spec(standard_specs, "40HC")
+        if preferred:
+            prioritized.append(preferred)
+            prioritized.extend([s for s in standard_specs if s.type != preferred.type])
+        else:
+            prioritized = standard_specs
+
+        for spec in prioritized:
             loads, unplaced = _pack_with_single_type(spec, in_gauge, constraints=constraints)
             count = len(loads)
             cost = (spec.cost or Decimal("0")) * count
@@ -214,8 +283,19 @@ def estimate(
             if best is None or score < best[0]:
                 best = (score, loads, unplaced)
         _, loads, unplaced = best
+
+    loads = [*special_loads, *loads]
     placements = [placement for load in loads for placement in load.placements]
     summary = Counter([load.spec.type for load in loads])
+
+    unplaced_special = [piece for piece in pieces if piece.piece_id in special_piece_ids and piece.piece_id not in {pl.piece.piece_id for pl in placements}]
+    if unplaced_special:
+        unplaced.extend(unplaced_special)
+        dedup = {}
+        for piece in unplaced:
+            dedup[piece.piece_id] = piece
+        unplaced = list(dedup.values())
+
     bias = _bias_by_container(loads, threshold_pct)
     return EstimateResult(
         placements=placements,
@@ -223,6 +303,7 @@ def estimate(
         oog_results=oog_results,
         summary_by_type=summary,
         bias_by_container=bias,
+        special_reason_by_piece=special_reason_by_piece,
     )
 
 
@@ -244,4 +325,5 @@ def validate(
         unplaced=pack_result.unplaced,
         bias_by_container=bias,
         oog_results=oog_results,
+        special_reason_by_piece={},
     )

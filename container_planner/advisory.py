@@ -15,31 +15,47 @@ TARE_WEIGHT_KG = {
 }
 
 RF_KEYWORDS = {"reefer", "refrigerated", "frozen", "cold", "冷凍", "冷蔵", "RF"}
+FR_MIN_VOLUME_M3 = Decimal("2")
 
 
-def recommend_special_container(piece: Piece, oog: OogResult) -> str:
+def _requires_rf(piece: Piece) -> bool:
     text = f"{piece.desc} {piece.package_text}".lower()
-    if any(keyword.lower() in text for keyword in RF_KEYWORDS):
-        return "RF"
-    if oog.over_W_cm > 0 or oog.over_L_cm > 0:
-        return "FR"
+    return any(keyword.lower() in text for keyword in RF_KEYWORDS)
+
+
+def _is_fr_candidate(piece: Piece, oog: OogResult) -> bool:
+    if oog.over_W_cm <= 0 and oog.over_L_cm <= 0:
+        return False
+    return piece.m3 > FR_MIN_VOLUME_M3
+
+
+def recommend_special_container(piece: Piece, oog: OogResult) -> tuple[str, str]:
+    if _requires_rf(piece):
+        return "RF", "冷凍・冷蔵キーワード検出"
+    if _is_fr_candidate(piece, oog):
+        return "FR", "長さ/幅超過（OW）"
     if oog.over_H_cm > 0:
         if piece.weight_kg > Decimal("28000"):
-            return "FR"
+            return "FR", "高さ超過かつ重量が重くOT不適"
         fills_one_container = piece.L_cm >= Decimal("1100") or piece.W_cm >= Decimal("220")
         if fills_one_container and piece.weight_kg >= Decimal("20000"):
-            return "FR"
-        return "OT"
-    return "20GP"
+            return "FR", "高さ超過かつ大型重量物"
+        return "OT", "高さ超過（OH）"
+    return "", ""
 
 
-def summarize_special_container_needs(oog_results: list[tuple[Piece, OogResult]]) -> dict[str, int]:
+def summarize_special_container_needs(oog_results: list[tuple[Piece, OogResult]]) -> tuple[dict[str, int], dict[str, str]]:
     counter: Counter[str] = Counter()
+    reasons: dict[str, str] = {}
     for piece, oog in oog_results:
         if not oog.oog_flag:
             continue
-        counter[recommend_special_container(piece, oog)] += 1
-    return dict(counter)
+        container_type, reason = recommend_special_container(piece, oog)
+        if not container_type:
+            continue
+        counter[container_type] += 1
+        reasons[piece.piece_id] = reason
+    return dict(counter), reasons
 
 
 def estimate_gross_weight_by_container(placements: list[Placement], special_counts: dict[str, int]) -> dict[str, Decimal]:

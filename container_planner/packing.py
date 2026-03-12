@@ -59,7 +59,17 @@ class ShelfPacker:
         by2 = b.placed_y_cm + b.orient_W_cm
         return a.placed_x_cm < bx2 and ax2 > b.placed_x_cm and a.placed_y_cm < by2 and ay2 > b.placed_y_cm
 
+    def _container_allows_stacking(self) -> bool:
+        return self.spec.type != "FR"
+
+    def _container_allows_piece(self, piece: Piece) -> bool:
+        if self.spec.type == "FR" and piece.m3 <= Decimal("2"):
+            return False
+        return True
+
     def _can_stack_on_bottom(self, bottom: Placement, top_weight: Decimal) -> bool:
+        if not self._container_allows_stacking():
+            return False
         if not bottom.piece.stackable:
             return False
         if bottom.piece.max_stack_load_kg is None:
@@ -98,6 +108,8 @@ class ShelfPacker:
         return x_ok and y_ok
 
     def _can_place_with_constraints(self, piece: Piece, orientation: Orientation) -> bool:
+        if not self._container_allows_piece(piece):
+            return False
         if self._is_incompatible(piece):
             return False
         payload = self.spec.max_payload_kg
