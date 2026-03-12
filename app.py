@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +12,7 @@ import yaml
 
 from container_planner import (
     CargoInputError,
+    build_container_summary_rows,
     build_placement_rows,
     estimate,
     expand_pieces,
@@ -144,6 +146,26 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
         f"{title_prefix} 配置CSVダウンロード",
         data=df.to_csv(index=False).encode("utf-8-sig"),
         file_name=f"{title_prefix.lower()}_placements.csv",
+        use_container_width=True,
+    )
+
+    summary_df = build_container_summary_rows(result.placements, order_map)
+    st.subheader("コンテナ別サマリー（単位: kg, m3, ton）")
+    st.dataframe(summary_df, use_container_width=True)
+    st.download_button(
+        f"{title_prefix} サマリーCSVダウンロード",
+        data=summary_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"{title_prefix.lower()}_container_summary.csv",
+        use_container_width=True,
+    )
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer) as writer:
+        summary_df.to_excel(writer, index=False, sheet_name="container_summary")
+    st.download_button(
+        f"{title_prefix} サマリーExcelダウンロード",
+        data=excel_buffer.getvalue(),
+        file_name=f"{title_prefix.lower()}_container_summary.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
 

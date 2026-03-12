@@ -5,6 +5,7 @@ from typing import Dict, Iterable
 
 import pandas as pd
 
+from container_planner.advisory import TARE_WEIGHT_KG
 from container_planner.models import BiasMetrics, OogResult, Placement
 from container_planner.naccs import NaccsResult
 
@@ -110,3 +111,47 @@ def build_placement_rows(
     )
     df = df.drop(columns=["container_order"])
     return df
+
+
+def build_container_summary_rows(placements: Iterable[Placement], order_map: Dict[str, int]) -> pd.DataFrame:
+    rows = []
+    for placement in placements:
+        rows.append(
+            {
+                "container_label": label_container(placement.container_type, placement.container_index),
+                "container_type": placement.container_type,
+                "container_index": placement.container_index,
+                "weight_kg": placement.piece.weight_kg,
+                "m3": placement.piece.m3,
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    columns = [
+        "container_label",
+        "container_type",
+        "container_index",
+        "total_weight_kg",
+        "total_weight_ton",
+        "freight_ton_ft",
+        "total_m3",
+        "total_gross_kg",
+        "max_single_item_weight_kg",
+    ]
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+
+    summary_df = (
+        df.groupby(["container_label", "container_type", "container_index"], as_index=False)
+        .agg(total_weight_kg=("weight_kg", "sum"), total_m3=("m3", "sum"), max_single_item_weight_kg=("weight_kg", "max"))
+    )
+    summary_df["total_weight_ton"] = summary_df["total_weight_kg"] / Decimal("1000")
+    summary_df["freight_ton_ft"] = summary_df[["total_weight_ton", "total_m3"]].max(axis=1)
+    summary_df["tare_kg"] = summary_df["container_type"].map(TARE_WEIGHT_KG).fillna(Decimal("0"))
+    summary_df["total_gross_kg"] = summary_df["total_weight_kg"] + summary_df["tare_kg"]
+
+    summary_df["container_order"] = summary_df["container_type"].map(order_map).fillna(999)
+    summary_df = summary_df.sort_values(by=["container_order", "container_index", "container_label"]).drop(
+        columns=["container_order", "tare_kg"]
+    )
+    return summary_df[columns]

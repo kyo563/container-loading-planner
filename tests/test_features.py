@@ -4,8 +4,9 @@ import pandas as pd
 
 from container_planner.io import CargoInputError, normalize_cargo_rows, expand_pieces
 from container_planner.advisory import recommend_special_container
-from container_planner.models import ContainerSpec, OogResult, Orientation, PackingConstraints
+from container_planner.models import ContainerSpec, OogResult, Orientation, PackingConstraints, Piece, Placement
 from container_planner.planner import estimate
+from container_planner.reporting import build_container_summary_rows
 
 
 def _base_spec(container_type: str, cost: str) -> ContainerSpec:
@@ -167,3 +168,78 @@ def test_recommend_special_container_h_only_heavy_is_fr():
         ),
     )
     assert recommend_special_container(piece, oog) == "FR"
+
+
+def test_build_container_summary_rows_aggregates_metrics():
+    piece_1 = Piece(
+        piece_id="A-1",
+        orig_id="A",
+        piece_no=1,
+        desc="cargo-a",
+        L_cm=Decimal("100"),
+        W_cm=Decimal("100"),
+        H_cm=Decimal("100"),
+        weight_kg=Decimal("1000"),
+        m3=Decimal("1.0"),
+        package_text="",
+        rotate_allowed=True,
+        stackable=True,
+        max_stack_load_kg=None,
+        incompatible_with_ids="",
+    )
+    piece_2 = Piece(
+        piece_id="B-1",
+        orig_id="B",
+        piece_no=1,
+        desc="cargo-b",
+        L_cm=Decimal("100"),
+        W_cm=Decimal("100"),
+        H_cm=Decimal("200"),
+        weight_kg=Decimal("500"),
+        m3=Decimal("2.0"),
+        package_text="",
+        rotate_allowed=True,
+        stackable=True,
+        max_stack_load_kg=None,
+        incompatible_with_ids="",
+    )
+    placements = [
+        Placement(
+            piece=piece_1,
+            container_type="20GP",
+            container_category="STANDARD",
+            container_index=1,
+            placed_x_cm=Decimal("0"),
+            placed_y_cm=Decimal("0"),
+            placed_z_cm=Decimal("0"),
+            orient_L_cm=piece_1.L_cm,
+            orient_W_cm=piece_1.W_cm,
+            orient_H_cm=piece_1.H_cm,
+            rotation_key="LWH",
+        ),
+        Placement(
+            piece=piece_2,
+            container_type="20GP",
+            container_category="STANDARD",
+            container_index=1,
+            placed_x_cm=Decimal("100"),
+            placed_y_cm=Decimal("0"),
+            placed_z_cm=Decimal("0"),
+            orient_L_cm=piece_2.L_cm,
+            orient_W_cm=piece_2.W_cm,
+            orient_H_cm=piece_2.H_cm,
+            rotation_key="LWH",
+        ),
+    ]
+
+    df = build_container_summary_rows(placements, {"20GP": 1})
+
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["container_label"] == "20GP ①"
+    assert row["total_weight_kg"] == Decimal("1500")
+    assert row["total_weight_ton"] == Decimal("1.5")
+    assert row["total_m3"] == Decimal("3.0")
+    assert row["freight_ton_ft"] == Decimal("3.0")
+    assert row["total_gross_kg"] == Decimal("3800")
+    assert row["max_single_item_weight_kg"] == Decimal("1000")
