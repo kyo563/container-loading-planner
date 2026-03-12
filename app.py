@@ -533,11 +533,11 @@ with main_tab:
 
     if flow_mode == "コンテナ本数を見積もる":
         st.subheader("必要本数の自動計算")
-        fixed_candidate_order = ["20GP", "40GP", "40HC"]
+        fixed_candidate_order = ["40HC", "40GP", "20GP"]
         candidates = [spec for t in fixed_candidate_order for spec in standard_specs if spec.type == t]
         if not candidates:
             candidates = list(standard_specs)
-        st.caption("見積り優先順位: 20GP（収まる場合）→ 40GP → 40HC。40HCを計算基準に固定。")
+        st.caption("見積り優先順位: 40HC → 40GP → 20GP（20GPは少量または40HC積載後の残貨物向け）。40HCを計算基準に固定。")
 
         if execute_clicked:
             if not ref_spec:

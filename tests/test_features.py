@@ -125,7 +125,7 @@ def test_constraints_can_make_piece_unplaced():
     assert len(result.unplaced) >= 1
 
 
-def test_fixed_priority_prefers_20gp_when_same_container_count():
+def test_fixed_priority_prefers_40hc_when_same_container_count():
     df = pd.DataFrame(
         [
             {"id": "A", "desc": "cargo-a", "qty": 1, "L_cm": 180, "W_cm": 90, "H_cm": 90, "weight_kg": 100},
@@ -152,7 +152,38 @@ def test_fixed_priority_prefers_20gp_when_same_container_count():
         "FIXED_PRIORITY",
         "SINGLE_TYPE",
     )
-    assert result.summary_by_type == {"20GP": 1}
+    assert result.summary_by_type == {"40HC": 1}
+
+
+def test_fixed_priority_uses_20gp_for_residual_after_40hc():
+    df = pd.DataFrame(
+        [
+            {"id": "A", "desc": "wide-cargo", "qty": 1, "L_cm": 150, "W_cm": 90, "H_cm": 90, "weight_kg": 100},
+            {"id": "B", "desc": "normal-cargo", "qty": 1, "L_cm": 150, "W_cm": 70, "H_cm": 90, "weight_kg": 100},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    spec_40hc = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("220"),
+        inner_W_cm=Decimal("80"),
+        inner_H_cm=Decimal("120"),
+        max_payload_kg=Decimal("1000"),
+        cost=Decimal("130"),
+    )
+    spec_20 = _base_spec("20GP", "100")
+
+    result = estimate(
+        pieces,
+        [spec_40hc, spec_20],
+        spec_20,
+        Decimal("20"),
+        "FIXED_PRIORITY",
+        "SINGLE_TYPE",
+    )
+    assert result.summary_by_type == {"40HC": 1, "20GP": 1}
+    assert len(result.unplaced) == 0
 
 
 def test_recommend_special_container_h_only_heavy_is_fr():
