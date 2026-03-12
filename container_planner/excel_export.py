@@ -45,6 +45,19 @@ def _build_summary_sheet(wb: Workbook, placements_df: pd.DataFrame) -> pd.DataFr
     return summary_df
 
 
+
+def _build_container_kpi_sheet(wb: Workbook, container_kpi_df: pd.DataFrame) -> None:
+    ws = wb.create_sheet("ContainerKPI")
+    headers = ["container_label", "container_type", "total_ft", "total_m3", "total_gross_kg", "max_single_gross_kg"]
+    if container_kpi_df.empty:
+        ws.append(headers)
+        return
+
+    ws.append(headers)
+    for row in container_kpi_df[headers].itertuples(index=False, name=None):
+        ws.append(list(row))
+    _auto_width(ws)
+
 def _build_placements_sheet(wb: Workbook, placements_df: pd.DataFrame) -> None:
     ws = wb.create_sheet("Placements")
     if placements_df.empty:
@@ -112,13 +125,16 @@ def _build_layout_sheet(wb: Workbook, placements_df: pd.DataFrame) -> None:
     ws.column_dimensions["A"].width = 28
 
 
-def build_excel_report(placements_df: pd.DataFrame) -> bytes:
+def build_excel_report(placements_df: pd.DataFrame, container_kpi_df: pd.DataFrame | None = None) -> bytes:
     wb = Workbook()
     wb.remove(wb.active)
 
     _build_summary_sheet(wb, placements_df)
     _build_placements_sheet(wb, placements_df)
     _build_layout_sheet(wb, placements_df)
+    if container_kpi_df is None:
+        container_kpi_df = pd.DataFrame()
+    _build_container_kpi_sheet(wb, container_kpi_df)
 
     stream = BytesIO()
     wb.save(stream)

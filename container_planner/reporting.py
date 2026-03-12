@@ -128,3 +128,32 @@ def build_placement_rows(
     )
     df = df.drop(columns=["container_order"])
     return df
+
+
+def build_container_kpi_rows(placements_df: pd.DataFrame) -> pd.DataFrame:
+    headers = [
+        "container_label",
+        "container_type",
+        "total_ft",
+        "total_m3",
+        "total_gross_kg",
+        "max_single_gross_kg",
+    ]
+    if placements_df.empty:
+        return pd.DataFrame(columns=headers)
+
+    numeric_df = placements_df.copy()
+    numeric_df["weight_kg"] = pd.to_numeric(numeric_df["weight_kg"], errors="coerce").fillna(0)
+    numeric_df["m3"] = pd.to_numeric(numeric_df["m3"], errors="coerce").fillna(0)
+
+    kpi_df = (
+        numeric_df.groupby(["container_label", "container_type"], as_index=False)
+        .agg(
+            total_m3=("m3", "sum"),
+            total_gross_kg=("weight_kg", "sum"),
+            max_single_gross_kg=("weight_kg", "max"),
+        )
+        .sort_values(["container_type", "container_label"])
+    )
+    kpi_df["total_ft"] = (kpi_df["total_gross_kg"] / 1000).combine(kpi_df["total_m3"], max)
+    return kpi_df[headers]

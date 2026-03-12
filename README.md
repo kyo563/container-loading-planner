@@ -138,10 +138,22 @@ UI は Streamlit、業務ロジックは `container_planner/` に分離されて
 - 前後差・左右差も算出
 - 閾値超過時に `bias_warn` と理由コードを付与
 
+### 4.4.1 container KPI 指標定義
+
+`container_label` 単位で以下を算出します。
+
+- **合計F/T (Freight Ton)**: `max(重量トン, 容積トン)`
+  - 重量トン = `total_gross_kg / 1000`
+  - 容積トン = `total_m3`
+- **合計M3**: `total_m3 = Σ m3`
+- **合計GROSS**: `total_gross_kg = Σ weight_kg`
+- **最大単体GROSS**: `max_single_gross_kg = max(weight_kg)`
+
 ### 4.5 出力仕様
 
 - 画面表示
   - 配置一覧（DataFrame）
+  - container KPI表（container_labelごとのF/T, M3, GROSS集計）
   - 積載不可貨物一覧
   - 2D散布図（上面）
   - 3Dビュー（pydeck）
@@ -149,8 +161,9 @@ UI は Streamlit、業務ロジックは `container_planner/` に分離されて
   - 陸送要件アドバイス
 - ダウンロード
   - 配置CSV
+  - container KPI CSV
   - 本数見積CSV / 確定本数CSV
-  - Excel帳票（主帳票: Summary / Placements / Layout）
+  - Excel帳票（主帳票: Summary / Placements / Layout / ContainerKPI）
   - 簡易バンニングPDF（文字ベース、注記用途）
 
 > **注意**: 本アプリの判定は計画支援を目的とした目安です。法令適合（車両制限・道路通行条件等）は、最終的に実運用で必ず確認してください。

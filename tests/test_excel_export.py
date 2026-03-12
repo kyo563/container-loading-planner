@@ -4,6 +4,7 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from container_planner.excel_export import build_excel_report
+from container_planner.reporting import build_container_kpi_rows
 
 
 def test_build_excel_report_creates_required_sheets():
@@ -36,10 +37,14 @@ def test_build_excel_report_creates_required_sheets():
         ]
     )
 
-    binary = build_excel_report(placements_df)
+    kpi_df = build_container_kpi_rows(placements_df)
+    binary = build_excel_report(placements_df, kpi_df)
     wb = load_workbook(filename=BytesIO(binary))
 
-    assert wb.sheetnames == ["Summary", "Placements", "Layout"]
+    assert wb.sheetnames == ["Summary", "Placements", "Layout", "ContainerKPI"]
     assert wb["Summary"]["A1"].value == "container_label"
     assert wb["Summary"]["C2"].value == 2
     assert wb["Layout"]["A1"].value == "40HC ① Layout"
+    assert wb["ContainerKPI"]["A1"].value == "container_label"
+    assert wb["ContainerKPI"]["C2"].value == 3.2
+    assert wb["ContainerKPI"]["F2"].value == 200

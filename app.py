@@ -12,6 +12,7 @@ import yaml
 
 from container_planner import (
     CargoInputError,
+    build_container_kpi_rows,
     build_placement_rows,
     estimate,
     expand_pieces,
@@ -194,6 +195,7 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
         getattr(result, "special_reason_by_piece", special_reasons),
         getattr(result, "weight_audit_by_container", {}),
     )
+    container_kpi_df = build_container_kpi_rows(df)
 
     st.subheader(f"{title_prefix} 配置一覧")
     if decision_reasons:
@@ -209,9 +211,18 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
     )
     st.download_button(
         f"{title_prefix} Excelダウンロード",
-        data=build_excel_report(df),
+        data=build_excel_report(df, container_kpi_df),
         file_name=f"{title_prefix.lower()}_report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+
+    st.subheader("container KPI表")
+    st.dataframe(container_kpi_df, use_container_width=True)
+    st.download_button(
+        f"{title_prefix} container KPI CSVダウンロード",
+        data=container_kpi_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"{title_prefix.lower()}_container_kpi.csv",
         use_container_width=True,
     )
 
@@ -655,6 +666,18 @@ with main_tab:
                     use_container_width=True,
                 )
 
+                estimate_plan_df = build_placement_rows(
+                    result.placements,
+                    {piece.piece_id: oog for piece, oog in result.oog_results},
+                    result.bias_by_container,
+                    order_map,
+                    package_lookup,
+                    getattr(result, "special_reason_by_piece", {}),
+                )
+                estimate_kpi_df = build_container_kpi_rows(estimate_plan_df)
+                st.subheader("container KPI表（Estimate）")
+                st.dataframe(estimate_kpi_df, use_container_width=True)
+
                 _render_result_block(result, order_map, package_lookup, title_prefix="Estimate")
 
     else:
@@ -733,6 +756,10 @@ with main_tab:
                     combined.special_reason_by_piece,
                     combined.weight_audit_by_container,
                 )
+                loading_kpi_df = build_container_kpi_rows(plan_df)
+                st.subheader("container KPI表（Loading）")
+                st.dataframe(loading_kpi_df, use_container_width=True)
+
                 lines = [
                     "Vanning Plan",
                     "Container counts: " + ", ".join([f"{t} x {c}" for t, c in selected_counts.items()]),
@@ -752,7 +779,7 @@ with main_tab:
                 )
                 st.download_button(
                     "Loading結果 Excelダウンロード",
-                    data=build_excel_report(plan_df),
+                    data=build_excel_report(plan_df, loading_kpi_df),
                     file_name="loading_result_report.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
