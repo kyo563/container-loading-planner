@@ -98,7 +98,17 @@ def _parse_bool(value, default: bool) -> bool:
 
 def load_cargo_csv(content: str) -> pd.DataFrame:
     data = pd.read_csv(io.StringIO(content))
-    return _apply_column_aliases(data)
+    return load_cargo_dataframe(data)
+
+
+def load_cargo_dataframe(data: pd.DataFrame) -> pd.DataFrame:
+    if data is None:
+        raise CargoInputError("入力データがありません")
+    if data.empty and len(data.columns) == 0:
+        raise CargoInputError("入力データが空です")
+
+    normalized = _apply_column_aliases(data.copy())
+    return ensure_columns(normalized)
 
 
 def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:

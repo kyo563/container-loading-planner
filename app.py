@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
+import io
 
 import pandas as pd
 from pandas.errors import EmptyDataError
@@ -15,6 +16,7 @@ from container_planner import (
     estimate,
     expand_pieces,
     load_cargo_csv,
+    load_cargo_dataframe,
     load_package_master,
     map_package_text,
     normalize_cargo_rows,
@@ -141,6 +143,41 @@ def _normalize_cargo_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 def _read_text(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
+
+
+def _coerce_cargo_df(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = load_cargo_dataframe(df)
+    return _normalize_cargo_dataframe(normalized)
+
+
+def _read_cargo_text_input(text: str) -> pd.DataFrame:
+    stripped = text.strip()
+    if not stripped:
+        raise CargoInputError("CSV/TSVテキストを入力してください。")
+
+    delimiter = "\t" if "\t" in stripped else ","
+    data = pd.read_csv(io.StringIO(stripped), sep=delimiter)
+    return _coerce_cargo_df(data)
+
+
+def _read_cargo_uploaded_file(uploaded_file) -> pd.DataFrame:
+    suffix = Path(uploaded_file.name).suffix.lower()
+    content = uploaded_file.getvalue()
+
+    if suffix == ".xlsx":
+        excel_df = pd.read_excel(io.BytesIO(content))
+        if excel_df.empty and len(excel_df.columns) == 0:
+            raise CargoInputError("シート空: Excelシートにデータがありません。")
+        return _coerce_cargo_df(excel_df)
+
+    if suffix == ".csv":
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise CargoInputError("文字コード不正: UTF-8のCSVを指定してください。") from exc
+        return _normalize_cargo_dataframe(load_cargo_csv(text))
+
+    raise CargoInputError("未対応の拡張子です。csv または xlsx を指定してください。")
 
 
 def _render_result_block(result, order_map, package_lookup, title_prefix: str):
@@ -340,15 +377,15 @@ with main_tab:
     st.subheader("パッキングリスト入力")
     cargo_col1, cargo_col2 = st.columns(2)
     with cargo_col1:
-        cargo_file = st.file_uploader("貨物CSVアップロード", type=["csv"], key="cargo")
+        cargo_file = st.file_uploader("貨物CSV/XLSXアップロード", type=["csv", "xlsx"], key="cargo")
     with cargo_col2:
         cargo_text = st.text_area(
-            "貨物CSVテキスト貼り付け",
+            "貨物CSV/TSVテキスト貼り付け",
             height=180,
-            placeholder="ItemID,CargoName,Qty,L,W,H,Gross,Style,Rotate,Stackable,MaxTopLoad,IncompatibleIDs\nA001,Machine,1,100,80,50,500,CRATE,TRUE,FALSE,,",
+            placeholder="ItemID\tCargoName\tQty\tL\tW\tH\tGross\tStyle\tRotate\tStackable\tMaxTopLoad\tIncompatibleIDs\nA001\tMachine\t1\t100\t80\t50\t500\tCRATE\tTRUE\tFALSE\t\t",
         )
 
-    st.caption("CSVヘッダーは簡易英語で入力できます（例: ItemID / CargoName / Qty / L / W / H / Gross / Style）。単位は L/W/H=cm、Gross=kg です。")
+    st.caption("CSV/XLSXのヘッダーは簡易英語入力に対応しています（例: ItemID / CargoName / Qty / L / W / H / Gross / Style）。貼り付け欄はTSV（Excelコピー）/CSVを自動判定します。単位は L/W/H=cm、Gross=kg です。")
     template_col1, template_col2 = st.columns(2)
     with template_col1:
         st.download_button(
@@ -370,21 +407,28 @@ with main_tab:
         except Exception as exc:  # noqa: BLE001
             st.error(f"サンプル貨物の読み込みに失敗しました: {exc}")
 
-    if csv_col2.button("貨物CSV入力を反映", use_container_width=True):
+    if csv_col2.button("貨物入力を反映", use_container_width=True):
         try:
             if cargo_file is not None:
-                loaded_df = load_cargo_csv(cargo_file.getvalue().decode("utf-8"))
-                st.session_state["cargo_df"] = _normalize_cargo_dataframe(loaded_df)
+                st.session_state["cargo_df"] = _read_cargo_uploaded_file(cargo_file)
             elif cargo_text.strip():
-                loaded_df = load_cargo_csv(cargo_text)
-                st.session_state["cargo_df"] = _normalize_cargo_dataframe(loaded_df)
+                st.session_state["cargo_df"] = _read_cargo_text_input(cargo_text)
             else:
-                st.warning("CSVをアップロードするか、テキストを入力してください。")
-            st.success("貨物データを反映しました。")
+                st.warning("CSV/XLSXをアップロードするか、CSV/TSVテキストを入力してください。")
+            if cargo_file is not None or cargo_text.strip():
+                st.success("貨物データを反映しました。")
+        except UnicodeDecodeError:
+            st.error("文字コード不正: UTF-8のCSVを指定してください。")
         except EmptyDataError:
-            st.error("貨物CSVが空です。内容を入力してください。")
+            st.error("ヘッダ不一致またはデータ空: 列ヘッダ/データ行を確認してください。")
         except CargoInputError as exc:
-            st.error(str(exc))
+            msg = str(exc)
+            if "必須カラム" in msg:
+                st.error(f"ヘッダ不一致: {msg}")
+            else:
+                st.error(msg)
+        except ValueError as exc:
+            st.error(f"シート空または形式不正: {exc}")
         except Exception as exc:  # noqa: BLE001
             st.error(f"入力の読み込みに失敗しました: {exc}")
 
