@@ -1,32 +1,162 @@
 # container-loading-planner
 
-Python + Streamlit で動くコンテナ積載計画アプリです。  
-GitHub 上で継続的に開発しやすいよう、最小構成の設計と CI を整備しています。
+Python + Streamlit で動く、コンテナ積載計画（Vanning Plan）作成アプリです。  
+貨物CSVとコンテナ仕様（YAML）を入力すると、**必要本数の見積り**と**本数固定での積載検証**を実行し、配置結果・OOG判定・偏荷重警告を確認できます。
 
-## 技術スタック
+---
+
+## 1. 目的
+
+このアプリの主目的は、以下を1画面で実行できるようにすることです。
+
+- コンテナ本数が未確定な段階での**本数見積り（Estimate）**
+- コンテナ本数が確定している段階での**収まり検証（Validate / Loading）**
+- OOG（Out Of Gauge）判定や偏荷重確認など、実務上の注意点の可視化
+
+UI は Streamlit、業務ロジックは `container_planner/` に分離されており、運用・保守・テストをしやすい構成です。
+
+---
+
+## 2. 構成要件
+
+### 2.1 実行環境
+
 - Python 3.11
-- Streamlit（フロントエンド）
-- pandas / PyYAML（データ処理）
+- 主要ライブラリ
+  - Streamlit（UI）
+  - pandas（CSV処理・表形式データ）
+  - PyYAML（コンテナ仕様YAMLの読み込み）
+  - pydeck（3D表示）
 
-## ディレクトリ構成
+### 2.2 入力データ要件
+
+#### 貨物CSV（必須）
+必須カラム:
+
+- `id`
+- `desc`
+- `qty`
+- `L_cm`
+- `W_cm`
+- `H_cm`
+- `weight_kg`
+
+任意カラム:
+
+- `package_text`
+- `rotate_allowed`
+- `stackable`
+- `max_stack_load_kg`
+- `incompatible_with_ids`
+
+ヘッダは別名入力（例: `ItemID`, `CargoName`, `Gross`, `Style` など）にも対応し、内部で標準カラムに正規化されます。
+
+#### コンテナ仕様YAML（任意）
+- `containers:` 配下にコンテナ仕様を定義
+- `STANDARD`（内寸あり）と `SPECIAL`（OT/FR/RFなど）を扱える構造
+- 未指定時はアプリ内のデフォルト仕様（20GP/40GP/40HC/OT/FR/RF）を使用
+
+#### 荷姿マスタCSV（任意）
+- `alias, code` 形式で定義
+- `package_text` から NACCS 用コードへのマッピングに使用
+
+---
+
+## 3. アプリ構成（アーキテクチャ）
+
 ```text
 .
-├── app.py                      # Streamlit エントリーポイント
-├── container_planner/          # ドメインロジック
-│   ├── models.py               # データモデル
-│   ├── io.py                   # 入出力・パース
-│   ├── planner.py              # 見積り/検証オーケストレーション
-│   ├── packing.py              # 積付け計算
-│   ├── oog.py                  # OOG判定
-│   ├── naccs.py                # 荷姿マッピング
-│   └── reporting.py            # 表示用データ生成
-├── data/                       # サンプル入力
+├── app.py                      # Streamlit UI（入力/表示/操作）
+├── container_planner/
+│   ├── models.py               # ドメインモデル（CargoRow, Piece, ContainerSpec, Placement 等）
+│   ├── io.py                   # CSV読込・列名正規化・入力バリデーション・qty展開
+│   ├── oog.py                  # OOG判定・向き選定
+│   ├── packing.py              # Shelfベース積付けロジック
+│   ├── planner.py              # estimate/validate のユースケース実行
+│   ├── advisory.py             # 特殊コンテナ推奨・陸送要件アドバイス
+│   ├── naccs.py                # 荷姿マスタ読込・荷姿コード変換
+│   ├── reporting.py            # 画面/CSV出力用の配置行データ作成
+│   └── pdf_export.py           # 簡易PDF（テキストベース）出力
+├── data/                       # サンプルCSV/YAML、CSVテンプレート
 ├── docs/basic_design.md        # 基本設計
-├── tests/                      # 最小テスト
-└── .github/workflows/ci.yml    # GitHub Actions CI
+└── tests/                      # smoke/feature テスト
 ```
 
-## ローカル実行
+---
+
+## 4. 仕様
+
+### 4.1 主要ユースケース
+
+#### A. コンテナ本数を見積もる（Estimate）
+- OOG貨物を分離して判定
+- In-gauge貨物を対象に積付け
+- 既定優先順（20GP→40GP→40HC）で、同数なら小さい優先順位を採用
+- 結果として、推奨本数・配置・積載不可貨物を表示
+
+#### B. コンテナ本数を確定して検証する（Validate / Loading）
+- ユーザーがコンテナ種別ごとの本数を指定
+- 指定本数内で積付けを実行
+- 収まり/未積載/OOG/偏荷重を確認
+
+### 4.2 積付けロジック（概要）
+
+- Shelf型アルゴリズム（行・層を進めながら配置）
+- 回転許可時は6方向の向きを検討
+- 以下制約を考慮:
+  - コンテナ内寸
+  - 最大積載重量（payload）
+  - 上載せ可否（`stackable`）
+  - 上載せ荷重上限（`max_stack_load_kg`）
+  - 非混載指定（`incompatible_with_ids`）
+  - 重心偏差制約（`max_cg_offset_x_pct`, `max_cg_offset_y_pct`）
+
+### 4.3 OOG判定仕様（概要）
+
+- 参照コンテナ（標準では 40HC）内寸と比較し、L/W/Hの超過を算出
+- もっとも超過合計が小さい向きを採用
+- 超過方向に応じて候補を提示
+  - 長さ/幅超過: FR
+  - 高さのみ超過: OT
+
+### 4.4 偏荷重評価
+
+- コンテナ内の重心位置から X/Y 偏差率を算出
+- 前後差・左右差も算出
+- 閾値超過時に `bias_warn` と理由コードを付与
+
+### 4.5 出力仕様
+
+- 画面表示
+  - 配置一覧（DataFrame）
+  - 積載不可貨物一覧
+  - 2D散布図（上面）
+  - 3Dビュー（pydeck）
+  - 推定トータルグロスウェイト
+  - 陸送要件アドバイス
+- ダウンロード
+  - 配置CSV
+  - 本数見積CSV / 確定本数CSV
+  - 簡易バンニングPDF（文字ベース）
+
+---
+
+## 5. このアプリで「できること」
+
+- 貨物CSVを読み込み、数量展開したピース単位で積載計算
+- コンテナ仕様をYAMLで差し替えてシミュレーション
+- 2つの運用モードを使い分け
+  - 見積りモード（本数自動算出）
+  - 検証モード（本数固定）
+- OOG判定結果の確認（超過寸法・推奨特殊コンテナ）
+- 偏荷重や重心偏差の確認
+- 荷姿マスタで package text を NACCSコードにマッピング
+- 配置結果を CSV/PDF として出力
+
+---
+
+## 6. クイックスタート
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -34,16 +164,28 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## 品質チェック
+起動後、以下の順で操作すると確認しやすいです。
+
+1. 「データメンテナンス」でサンプル荷姿マスタ/コンテナ仕様を反映
+2. 「計画作成」でサンプル貨物を読み込む
+3. 見積りモード or 本数固定モードで実行
+4. 配置結果とダウンロードファイルを確認
+
+---
+
+## 7. テスト・品質確認
+
 ```bash
 python -m unittest discover -s tests
 python -m compileall app.py container_planner
 ```
 
-## 開発フロー（基本）
-1. GitHub Issue で要件を整理
-2. 小さな単位でブランチ作成・実装
-3. Pull Request でレビュー
-4. GitHub Actions CI（テスト/構文チェック）通過後にマージ
+---
 
-詳細設計は `docs/basic_design.md` を参照してください。
+## 8. 補足ドキュメント
+
+- 基本設計: `docs/basic_design.md`
+- サンプル入力:
+  - `data/cargo.sample.csv`
+  - `data/package_master.sample.csv`
+  - `data/containers.sample.yaml`
