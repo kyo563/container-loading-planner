@@ -151,6 +151,8 @@ def estimate(
     algorithm: str,
     constraints: PackingConstraints | None = None,
 ) -> EstimateResult:
+    small_lot_max_pieces = 2
+
     oog_results = []
     in_gauge: list[Piece] = []
     for piece in pieces:
@@ -162,8 +164,13 @@ def estimate(
     in_gauge = sort_pieces(in_gauge)
     best = None
     if mode == "FIXED_PRIORITY":
-        priority_order = {"20GP": 0, "40GP": 1, "40HC": 2}
+        priority_order = {"40HC": 0, "40GP": 1, "20GP": 2}
+        spec_by_type = {spec.type: spec for spec in standard_specs}
+        allow_20gp_single_type = len(in_gauge) <= small_lot_max_pieces
+
         for spec in standard_specs:
+            if spec.type == "20GP" and not allow_20gp_single_type:
+                continue
             loads, unplaced = _pack_with_single_type(spec, in_gauge, constraints=constraints)
             if unplaced:
                 continue
@@ -174,10 +181,27 @@ def estimate(
                 best = (score, loads, unplaced)
         if best is None:
             for spec in standard_specs:
+                if spec.type == "20GP" and not allow_20gp_single_type:
+                    continue
                 loads, unplaced = _pack_with_single_type(spec, in_gauge, constraints=constraints)
-                score = (len(loads), priority_order.get(spec.type, 99), len(unplaced))
+                score = (len(unplaced), len(loads), priority_order.get(spec.type, 99))
                 if best is None or score < best[0]:
                     best = (score, loads, unplaced)
+
+            spec_40hc = spec_by_type.get("40HC")
+            spec_20gp = spec_by_type.get("20GP")
+            if spec_40hc and spec_20gp:
+                loads_40hc, unplaced_40hc = _pack_with_single_type(spec_40hc, in_gauge, constraints=constraints)
+                if unplaced_40hc:
+                    residual_loads_20gp, residual_unplaced = _pack_with_single_type(
+                        spec_20gp,
+                        unplaced_40hc,
+                        constraints=constraints,
+                    )
+                    combo_loads = [*loads_40hc, *residual_loads_20gp]
+                    score = (len(residual_unplaced), len(combo_loads), priority_order.get("40HC", 99))
+                    if best is None or score < best[0]:
+                        best = (score, combo_loads, residual_unplaced)
         _, loads, unplaced = best
     elif algorithm == "MULTI_TYPE":
         loads, unplaced = _pack_with_multi_type(standard_specs, in_gauge, mode, constraints=constraints)
