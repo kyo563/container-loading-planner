@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from decimal import Decimal
 
-from container_planner.models import OogResult, Piece, Placement
+from container_planner.models import ContainerLoad, OogResult, Piece, Placement, WeightAdvisory
 
 TARE_WEIGHT_KG = {
     "20GP": Decimal("2300"),
@@ -15,6 +15,7 @@ TARE_WEIGHT_KG = {
 }
 
 RF_KEYWORDS = {"reefer", "refrigerated", "frozen", "cold", "冷凍", "冷蔵", "RF"}
+DEFAULT_WARNING_RATIO_PCT = Decimal("90")
 
 
 def recommend_special_container(piece: Piece, oog: OogResult) -> str:
@@ -59,6 +60,51 @@ def estimate_gross_weight_by_container(placements: list[Placement], special_coun
             key = f"{ctype}-S{idx}"
             result[key] = tare
     return result
+
+
+def _ratio_pct(value: Decimal, limit: Decimal | None) -> Decimal:
+    if limit is None or limit <= 0:
+        return Decimal("0")
+    return (value / limit) * Decimal("100")
+
+
+def evaluate_container_weight_advisories(loads: list[ContainerLoad]) -> dict[tuple[str, int], WeightAdvisory]:
+    alerts: dict[tuple[str, int], WeightAdvisory] = {}
+    for load in loads:
+        cargo_weight = sum((pl.piece.weight_kg for pl in load.placements), Decimal("0"))
+        tare = TARE_WEIGHT_KG.get(load.spec.type, Decimal("0"))
+        gross_weight = cargo_weight + tare
+        chassis_weight = load.spec.chassis_weight_kg or Decimal("0")
+        road_total = gross_weight + chassis_weight
+
+        payload_ratio = _ratio_pct(cargo_weight, load.spec.max_payload_kg)
+        road_limit = load.spec.road_max_total_kg or load.spec.road_max_gross_kg
+        road_ratio = _ratio_pct(road_total, road_limit)
+        warning_ratio = load.spec.warning_ratio_pct or DEFAULT_WARNING_RATIO_PCT
+
+        reasons: list[str] = []
+        if load.spec.max_payload_kg is not None:
+            if cargo_weight > load.spec.max_payload_kg:
+                reasons.append("PAYLOAD_LIMIT_EXCEEDED")
+            elif payload_ratio >= warning_ratio:
+                reasons.append("PAYLOAD_NEAR_LIMIT")
+
+        if road_limit is not None:
+            if road_total > road_limit:
+                reasons.append("ROAD_LIMIT_EXCEEDED")
+            elif road_ratio >= warning_ratio:
+                reasons.append("ROAD_LIMIT_NEAR")
+
+        alerts[(load.spec.type, load.index)] = WeightAdvisory(
+            alert_flag=bool(reasons),
+            reasons=";".join(reasons),
+            cargo_weight_kg=cargo_weight,
+            gross_weight_kg=gross_weight,
+            road_total_weight_kg=road_total,
+            payload_ratio_pct=payload_ratio,
+            road_ratio_pct=road_ratio,
+        )
+    return alerts
 
 
 def suggest_truck_requirement(gross_kg: Decimal, max_over_w_cm: Decimal, max_over_h_cm: Decimal) -> str:

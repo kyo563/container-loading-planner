@@ -5,7 +5,7 @@ from typing import Dict, Iterable
 
 import pandas as pd
 
-from container_planner.models import BiasMetrics, OogResult, Placement
+from container_planner.models import BiasMetrics, OogResult, Placement, WeightAdvisory
 from container_planner.naccs import NaccsResult
 
 CIRCLED = {
@@ -43,6 +43,7 @@ def build_placement_rows(
     bias_lookup: Dict[tuple, BiasMetrics],
     order_map: Dict[str, int],
     package_lookup: Dict[str, NaccsResult],
+    weight_alert_lookup: Dict[tuple, WeightAdvisory] | None = None,
 ) -> pd.DataFrame:
     rows = []
     for placement in placements:
@@ -50,6 +51,7 @@ def build_placement_rows(
         oog = oog_lookup.get(piece.piece_id)
         bias = bias_lookup.get((placement.container_type, placement.container_index))
         package = package_lookup.get(piece.piece_id)
+        weight_alert = (weight_alert_lookup or {}).get((placement.container_type, placement.container_index))
         rows.append(
             {
                 "container_label": label_container(placement.container_type, placement.container_index),
@@ -92,6 +94,8 @@ def build_placement_rows(
                 "bias_offset_y_pct": bias.offset_y_pct if bias else Decimal("0"),
                 "bias_front_rear_diff_pct": bias.front_rear_diff_pct if bias else Decimal("0"),
                 "bias_left_right_diff_pct": bias.left_right_diff_pct if bias else Decimal("0"),
+                "weight_alert_flag": weight_alert.alert_flag if weight_alert else False,
+                "weight_alert_reason": weight_alert.reasons if weight_alert else "",
             }
         )
     df = pd.DataFrame(rows)

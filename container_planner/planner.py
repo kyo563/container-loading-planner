@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from decimal import Decimal
 from typing import Iterable
 
+from container_planner.advisory import evaluate_container_weight_advisories
 from container_planner.models import (
     BiasMetrics,
     ContainerLoad,
@@ -11,11 +12,15 @@ from container_planner.models import (
     EstimateResult,
     PackingConstraints,
     Piece,
+    Placement,
     ValidateResult,
 )
 from container_planner.oog import evaluate_oog
 from container_planner.packing import pack_pieces
 from container_planner.rounding import ceil_decimal
+
+
+REBALANCE_DIFF_RATIO = Decimal("0.25")
 
 
 def sort_pieces(pieces: Iterable[Piece]) -> list[Piece]:
@@ -142,6 +147,95 @@ def _pack_with_multi_type(
     return loads, remaining
 
 
+def _container_weight(load: ContainerLoad) -> Decimal:
+    return sum((pl.piece.weight_kg for pl in load.placements), Decimal("0"))
+
+
+def _build_load_from_pieces(
+    spec: ContainerSpec,
+    index: int,
+    pieces: list[Piece],
+    constraints: PackingConstraints | None,
+) -> ContainerLoad | None:
+    packed = pack_pieces(spec, sort_pieces(pieces), max_containers=1, constraints=constraints)
+    if packed.unplaced:
+        return None
+    if not packed.loads:
+        return ContainerLoad(spec=spec, index=index, placements=[])
+    placements: list[Placement] = []
+    for pl in packed.loads[0].placements:
+        placements.append(
+            Placement(
+                piece=pl.piece,
+                container_type=spec.type,
+                container_category=spec.category,
+                container_index=index,
+                placed_x_cm=pl.placed_x_cm,
+                placed_y_cm=pl.placed_y_cm,
+                placed_z_cm=pl.placed_z_cm,
+                orient_L_cm=pl.orient_L_cm,
+                orient_W_cm=pl.orient_W_cm,
+                orient_H_cm=pl.orient_H_cm,
+                rotation_key=pl.rotation_key,
+            )
+        )
+    return ContainerLoad(spec=spec, index=index, placements=placements)
+
+
+def _rebalance_weight_in_group(loads: list[ContainerLoad], constraints: PackingConstraints | None = None) -> list[ContainerLoad]:
+    if len(loads) <= 1:
+        return loads
+    for _ in range(len(loads) * 2):
+        ordered = sorted(loads, key=_container_weight)
+        light = ordered[0]
+        heavy = ordered[-1]
+        diff = _container_weight(heavy) - _container_weight(light)
+        total = sum((_container_weight(load) for load in loads), Decimal("0"))
+        if total <= 0 or diff <= (total / Decimal(str(len(loads)))) * REBALANCE_DIFF_RATIO:
+            break
+
+        heavy_pieces = [pl.piece for pl in heavy.placements]
+        light_pieces = [pl.piece for pl in light.placements]
+        moved = False
+        for candidate in sorted(heavy_pieces, key=lambda p: p.weight_kg, reverse=True):
+            new_heavy = [p for p in heavy_pieces if p.piece_id != candidate.piece_id]
+            new_light = light_pieces + [candidate]
+            rebuilt_heavy = _build_load_from_pieces(heavy.spec, heavy.index, new_heavy, constraints)
+            rebuilt_light = _build_load_from_pieces(light.spec, light.index, new_light, constraints)
+            if rebuilt_heavy is None or rebuilt_light is None:
+                continue
+            before = abs(_container_weight(heavy) - _container_weight(light))
+            after = abs(_container_weight(rebuilt_heavy) - _container_weight(rebuilt_light))
+            if after >= before:
+                continue
+            for idx, load in enumerate(loads):
+                if load.spec.type == heavy.spec.type and load.index == heavy.index:
+                    loads[idx] = rebuilt_heavy
+                elif load.spec.type == light.spec.type and load.index == light.index:
+                    loads[idx] = rebuilt_light
+            moved = True
+            break
+        if not moved:
+            break
+    return loads
+
+
+def _rebalance_load_weights(loads: list[ContainerLoad], constraints: PackingConstraints | None = None) -> list[ContainerLoad]:
+    grouped: dict[tuple[str, str], list[ContainerLoad]] = defaultdict(list)
+    others: list[ContainerLoad] = []
+    for load in loads:
+        if load.spec.category == "STANDARD":
+            grouped[(load.spec.type, load.spec.category)].append(load)
+        else:
+            others.append(load)
+    rebalanced: list[ContainerLoad] = []
+    for group_loads in grouped.values():
+        rebalanced.extend(_rebalance_weight_in_group(group_loads, constraints))
+    rebalanced.extend(others)
+    rebalanced.sort(key=lambda x: (x.spec.type, x.index))
+    return rebalanced
+
+
 def estimate(
     pieces: list[Piece],
     standard_specs: list[ContainerSpec],
@@ -190,15 +284,18 @@ def estimate(
             if best is None or score < best[0]:
                 best = (score, loads, unplaced)
         _, loads, unplaced = best
+    loads = _rebalance_load_weights(loads, constraints=constraints)
     placements = [placement for load in loads for placement in load.placements]
     summary = Counter([load.spec.type for load in loads])
     bias = _bias_by_container(loads, threshold_pct)
+    weight_alerts = evaluate_container_weight_advisories(loads)
     return EstimateResult(
         placements=placements,
         unplaced=unplaced,
         oog_results=oog_results,
         summary_by_type=summary,
         bias_by_container=bias,
+        weight_alerts_by_container=weight_alerts,
     )
 
 
@@ -212,12 +309,15 @@ def validate(
 ) -> ValidateResult:
     in_gauge = sort_pieces(pieces)
     pack_result = pack_pieces(spec, in_gauge, max_containers=count, constraints=constraints)
-    placements = [placement for load in pack_result.loads for placement in load.placements]
-    bias = _bias_by_container(pack_result.loads, threshold_pct)
+    loads = _rebalance_load_weights(pack_result.loads, constraints=constraints)
+    placements = [placement for load in loads for placement in load.placements]
+    bias = _bias_by_container(loads, threshold_pct)
+    weight_alerts = evaluate_container_weight_advisories(loads)
     oog_results = [(piece, evaluate_oog(piece, ref_spec)) for piece in pieces]
     return ValidateResult(
         placements=placements,
         unplaced=pack_result.unplaced,
         bias_by_container=bias,
         oog_results=oog_results,
+        weight_alerts_by_container=weight_alerts,
     )

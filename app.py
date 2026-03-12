@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
+import io
 import pandas as pd
 from pandas.errors import EmptyDataError
 import pydeck as pdk
@@ -42,6 +43,9 @@ containers:
     inner_W_cm: 235
     inner_H_cm: 239
     max_payload_kg: 28200
+    chassis_weight_kg: 3500
+    road_max_total_kg: 36000
+    warning_ratio_pct: 90
     cost: 1.0
   - type: 40GP
     category: STANDARD
@@ -49,6 +53,9 @@ containers:
     inner_W_cm: 235
     inner_H_cm: 239
     max_payload_kg: 26700
+    chassis_weight_kg: 3700
+    road_max_total_kg: 44000
+    warning_ratio_pct: 90
     cost: 1.7
   - type: 40HC
     category: STANDARD
@@ -56,6 +63,9 @@ containers:
     inner_W_cm: 235
     inner_H_cm: 269
     max_payload_kg: 26600
+    chassis_weight_kg: 3800
+    road_max_total_kg: 44000
+    warning_ratio_pct: 90
     cost: 1.9
   - type: OT
     category: SPECIAL
@@ -100,6 +110,10 @@ def _parse_container_specs(containers_yaml: str):
                 deck_L_cm=_to_decimal(item.get("deck_L_cm")),
                 deck_W_cm=_to_decimal(item.get("deck_W_cm")),
                 max_payload_kg=_to_decimal(item.get("max_payload_kg")),
+                road_max_gross_kg=_to_decimal(item.get("road_max_gross_kg")),
+                chassis_weight_kg=_to_decimal(item.get("chassis_weight_kg")),
+                road_max_total_kg=_to_decimal(item.get("road_max_total_kg")),
+                warning_ratio_pct=_to_decimal(item.get("warning_ratio_pct")),
                 cost=_to_decimal(item.get("cost")),
             )
         )
@@ -133,10 +147,24 @@ def _read_text(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
+def _to_excel_bytes(df: pd.DataFrame) -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="result")
+    return output.getvalue()
+
+
 def _render_result_block(result, order_map, package_lookup, title_prefix: str):
     special_counts = summarize_special_container_needs(result.oog_results)
     oog_lookup = {piece.piece_id: oog for piece, oog in result.oog_results}
-    df = build_placement_rows(result.placements, oog_lookup, result.bias_by_container, order_map, package_lookup)
+    df = build_placement_rows(
+        result.placements,
+        oog_lookup,
+        result.bias_by_container,
+        order_map,
+        package_lookup,
+        result.weight_alerts_by_container,
+    )
 
     st.subheader(f"{title_prefix} 配置一覧")
     st.dataframe(df, use_container_width=True)
@@ -144,6 +172,12 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
         f"{title_prefix} 配置CSVダウンロード",
         data=df.to_csv(index=False).encode("utf-8-sig"),
         file_name=f"{title_prefix.lower()}_placements.csv",
+        use_container_width=True,
+    )
+    st.download_button(
+        f"{title_prefix} 配置Excelダウンロード",
+        data=_to_excel_bytes(df),
+        file_name=f"{title_prefix.lower()}_placements.xlsx",
         use_container_width=True,
     )
 
@@ -198,6 +232,40 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
                 ),
                 use_container_width=True,
             )
+
+    alert_rows = []
+    for (container_type, container_index), alert in result.weight_alerts_by_container.items():
+        if not alert.alert_flag:
+            continue
+        alert_rows.append(
+            {
+                "container": f"{container_type}-{container_index}",
+                "reason": alert.reasons,
+                "cargo_weight_kg": alert.cargo_weight_kg,
+                "gross_weight_kg": alert.gross_weight_kg,
+                "road_total_weight_kg": alert.road_total_weight_kg,
+                "payload_ratio_pct": alert.payload_ratio_pct,
+                "road_ratio_pct": alert.road_ratio_pct,
+            }
+        )
+    st.subheader("重量注意一覧（別記）")
+    if alert_rows:
+        alert_df = pd.DataFrame(alert_rows).sort_values(by=["container"])
+        st.dataframe(alert_df, use_container_width=True)
+        st.download_button(
+            f"{title_prefix} 重量注意CSVダウンロード",
+            data=alert_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"{title_prefix.lower()}_weight_alerts.csv",
+            use_container_width=True,
+        )
+        st.download_button(
+            f"{title_prefix} 重量注意Excelダウンロード",
+            data=_to_excel_bytes(alert_df),
+            file_name=f"{title_prefix.lower()}_weight_alerts.xlsx",
+            use_container_width=True,
+        )
+    else:
+        st.success("重量注意コンテナはありません")
 
     gross_map = estimate_gross_weight_by_container(result.placements, special_counts)
     gross_df = pd.DataFrame(gross_map.items(), columns=["container", "estimated_gross_kg"])
@@ -571,6 +639,7 @@ with main_tab:
                 remaining = list(pieces)
                 placements = []
                 bias_by_container = {}
+                weight_alerts_by_container = {}
                 for spec, count in standard_count_specs:
                     if not remaining:
                         break
@@ -584,18 +653,26 @@ with main_tab:
                     )
                     placements.extend(result.placements)
                     bias_by_container.update(result.bias_by_container)
+                    weight_alerts_by_container.update(result.weight_alerts_by_container)
                     remaining = result.unplaced
 
                 oog_results = [(piece, evaluate_oog(piece, ref_spec)) for piece in pieces]
 
                 class CombinedResult:
-                    def __init__(self, placements, unplaced, bias_by_container, oog_results):
+                    def __init__(self, placements, unplaced, bias_by_container, oog_results, weight_alerts_by_container):
                         self.placements = placements
                         self.unplaced = unplaced
                         self.bias_by_container = bias_by_container
                         self.oog_results = oog_results
+                        self.weight_alerts_by_container = weight_alerts_by_container
 
-                combined = CombinedResult(placements, remaining, bias_by_container, oog_results)
+                combined = CombinedResult(
+                    placements,
+                    remaining,
+                    bias_by_container,
+                    oog_results,
+                    weight_alerts_by_container,
+                )
                 _render_result_block(combined, order_map, package_lookup, title_prefix="Loading")
 
                 selected_counts = {k: int(v) for k, v in counts_by_type.items() if int(v) > 0}
@@ -615,6 +692,7 @@ with main_tab:
                     combined.bias_by_container,
                     order_map,
                     package_lookup,
+                    combined.weight_alerts_by_container,
                 )
                 lines = [
                     "Vanning Plan",

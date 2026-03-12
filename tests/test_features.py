@@ -3,8 +3,8 @@ from decimal import Decimal
 import pandas as pd
 
 from container_planner.io import CargoInputError, normalize_cargo_rows, expand_pieces
-from container_planner.advisory import recommend_special_container
-from container_planner.models import ContainerSpec, OogResult, Orientation, PackingConstraints
+from container_planner.advisory import evaluate_container_weight_advisories, recommend_special_container
+from container_planner.models import ContainerLoad, ContainerSpec, OogResult, Orientation, PackingConstraints, Placement
 from container_planner.planner import estimate
 
 
@@ -167,3 +167,61 @@ def test_recommend_special_container_h_only_heavy_is_fr():
         ),
     )
     assert recommend_special_container(piece, oog) == "FR"
+
+
+def test_weight_advisory_detects_limit_exceeded_and_near():
+    spec = ContainerSpec(
+        type="20GP",
+        category="STANDARD",
+        inner_L_cm=Decimal("200"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("100"),
+        max_payload_kg=Decimal("1000"),
+        road_max_total_kg=Decimal("3500"),
+        chassis_weight_kg=Decimal("100"),
+        warning_ratio_pct=Decimal("90"),
+    )
+    piece = expand_pieces(normalize_cargo_rows(pd.DataFrame([
+        {"id": "A", "desc": "heavy", "qty": 1, "L_cm": 100, "W_cm": 100, "H_cm": 50, "weight_kg": 1200}
+    ])))[0]
+    placement = Placement(
+        piece=piece,
+        container_type="20GP",
+        container_category="STANDARD",
+        container_index=1,
+        placed_x_cm=Decimal("0"),
+        placed_y_cm=Decimal("0"),
+        placed_z_cm=Decimal("0"),
+        orient_L_cm=piece.L_cm,
+        orient_W_cm=piece.W_cm,
+        orient_H_cm=piece.H_cm,
+        rotation_key="LWH",
+    )
+    load = ContainerLoad(spec=spec, index=1, placements=[placement])
+    alerts = evaluate_container_weight_advisories([load])
+    alert = alerts[("20GP", 1)]
+    assert alert.alert_flag is True
+    assert "PAYLOAD_LIMIT_EXCEEDED" in alert.reasons
+
+
+def test_estimate_includes_weight_alert_flag_in_output():
+    df = pd.DataFrame([
+        {"id": "A", "desc": "cargo-a", "qty": 2, "L_cm": 120, "W_cm": 100, "H_cm": 50, "weight_kg": 450},
+        {"id": "B", "desc": "cargo-b", "qty": 2, "L_cm": 120, "W_cm": 100, "H_cm": 50, "weight_kg": 450},
+    ])
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    spec = ContainerSpec(
+        type="20GP",
+        category="STANDARD",
+        inner_L_cm=Decimal("240"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("100"),
+        max_payload_kg=Decimal("900"),
+        road_max_total_kg=Decimal("3500"),
+        chassis_weight_kg=Decimal("200"),
+        warning_ratio_pct=Decimal("90"),
+        cost=Decimal("1"),
+    )
+    result = estimate(pieces, [spec], spec, Decimal("20"), "MIN_CONTAINERS", "SINGLE_TYPE")
+    assert len(result.weight_alerts_by_container) >= 1
+    assert any(alert.alert_flag for alert in result.weight_alerts_by_container.values())

@@ -49,6 +49,10 @@ class ContainerSpec:
     deck_L_cm: Optional[Decimal] = None
     deck_W_cm: Optional[Decimal] = None
     max_payload_kg: Optional[Decimal] = None
+    road_max_gross_kg: Optional[Decimal] = None
+    chassis_weight_kg: Optional[Decimal] = None
+    road_max_total_kg: Optional[Decimal] = None
+    warning_ratio_pct: Optional[Decimal] = None
     cost: Optional[Decimal] = None
 
 
@@ -107,6 +111,17 @@ class ContainerLoad:
 
 
 @dataclass
+class WeightAdvisory:
+    alert_flag: bool
+    reasons: str
+    cargo_weight_kg: Decimal
+    gross_weight_kg: Decimal
+    road_total_weight_kg: Decimal
+    payload_ratio_pct: Decimal
+    road_ratio_pct: Decimal
+
+
+@dataclass
 class PackResult:
     loads: List[ContainerLoad]
     unplaced: List[Piece]
@@ -125,6 +140,7 @@ class EstimateResult:
     oog_results: List[tuple[Piece, OogResult]]
     summary_by_type: dict
     bias_by_container: dict
+    weight_alerts_by_container: dict
 
 
 @dataclass
@@ -133,3 +149,4 @@ class ValidateResult:
     unplaced: List[Piece]
     bias_by_container: dict
     oog_results: List[tuple[Piece, OogResult]]
+    weight_alerts_by_container: dict
