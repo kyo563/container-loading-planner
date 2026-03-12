@@ -133,6 +133,7 @@ class EstimateResult:
     summary_by_type: dict
     bias_by_container: dict
     special_reason_by_piece: dict[str, str] = field(default_factory=dict)
+    decision_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass
