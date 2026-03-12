@@ -337,3 +337,53 @@ def test_fr_disallows_stacking_and_small_volume_piece():
     result_stack = pack_pieces(fr_spec, [bottom, top])
     placed_ids = {pl.piece.piece_id for load in result_stack.loads for pl in load.placements}
     assert len(placed_ids) == 1
+
+
+def test_weight_audit_flags_payload_and_vehicle_limit():
+    df = pd.DataFrame(
+        [
+            {"id": "A", "desc": "heavy-a", "qty": 1, "L_cm": 90, "W_cm": 90, "H_cm": 90, "weight_kg": 800},
+            {"id": "B", "desc": "heavy-b", "qty": 1, "L_cm": 90, "W_cm": 90, "H_cm": 90, "weight_kg": 700},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    spec = _base_spec("20GP", "100")
+    result = estimate(
+        pieces,
+        [spec],
+        spec,
+        Decimal("20"),
+        "MIN_CONTAINERS",
+        "SINGLE_TYPE",
+        vehicle_limit_kg=Decimal("700"),
+        payload_near_threshold_pct=Decimal("70"),
+    )
+    audit = result.weight_audit_by_container[("20GP", 1)]
+    assert audit.weight_alert is True
+    assert "車両重量制限超過" in audit.weight_alert_message
+    assert "最大積載重量に近接" in audit.weight_alert_message
+
+
+
+def test_weight_audit_detects_concentration_warning():
+    df = pd.DataFrame(
+        [
+            {"id": "A", "desc": "heavy", "qty": 1, "L_cm": 90, "W_cm": 90, "H_cm": 90, "weight_kg": 900},
+            {"id": "B", "desc": "light", "qty": 2, "L_cm": 50, "W_cm": 50, "H_cm": 50, "weight_kg": 50},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    spec = _base_spec("20GP", "100")
+    result = estimate(
+        pieces,
+        [spec],
+        spec,
+        Decimal("20"),
+        "MIN_CONTAINERS",
+        "SINGLE_TYPE",
+        concentration_top_n=1,
+        concentration_warn_threshold_pct=Decimal("70"),
+    )
+    audit = result.weight_audit_by_container[("20GP", 1)]
+    assert audit.weight_alert is True
+    assert "重量貨物集中度高" in audit.weight_alert_message

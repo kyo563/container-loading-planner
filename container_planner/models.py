@@ -107,6 +107,18 @@ class BiasMetrics:
 
 
 @dataclass
+class WeightAuditMetrics:
+    total_weight_kg: Decimal
+    vehicle_limit_kg: Optional[Decimal]
+    vehicle_limit_ratio_pct: Decimal
+    payload_limit_kg: Optional[Decimal]
+    payload_ratio_pct: Decimal
+    concentration_top_n_ratio_pct: Decimal
+    weight_alert: bool
+    weight_alert_message: str
+
+
+@dataclass
 class ContainerLoad:
     spec: ContainerSpec
     index: int
@@ -132,6 +144,7 @@ class EstimateResult:
     oog_results: List[tuple[Piece, OogResult]]
     summary_by_type: dict
     bias_by_container: dict
+    weight_audit_by_container: dict[tuple[str, int], WeightAuditMetrics] = field(default_factory=dict)
     special_reason_by_piece: dict[str, str] = field(default_factory=dict)
     decision_reasons: list[str] = field(default_factory=list)
 
@@ -142,4 +155,5 @@ class ValidateResult:
     unplaced: List[Piece]
     bias_by_container: dict
     oog_results: List[tuple[Piece, OogResult]]
+    weight_audit_by_container: dict[tuple[str, int], WeightAuditMetrics] = field(default_factory=dict)
     special_reason_by_piece: dict[str, str] = field(default_factory=dict)

@@ -4,7 +4,7 @@ from collections import Counter
 from decimal import Decimal
 from typing import Iterable
 
-from container_planner.advisory import recommend_special_container
+from container_planner.advisory import build_weight_audit_metrics, recommend_special_container
 from container_planner.models import (
     BiasMetrics,
     ContainerLoad,
@@ -114,6 +114,26 @@ def _bias_by_container(loads: Iterable[ContainerLoad], threshold_pct: Decimal) -
     return result
 
 
+def _weight_audit_by_container(
+    loads: Iterable[ContainerLoad],
+    vehicle_limit_kg: Decimal | None,
+    payload_near_threshold_pct: Decimal,
+    concentration_top_n: int,
+    concentration_warn_threshold_pct: Decimal,
+) -> dict:
+    audits = {}
+    for load in loads:
+        audits[(load.spec.type, load.index)] = build_weight_audit_metrics(
+            placements=load.placements,
+            payload_limit_kg=load.spec.max_payload_kg,
+            vehicle_limit_kg=vehicle_limit_kg,
+            payload_near_threshold_pct=payload_near_threshold_pct,
+            top_n=concentration_top_n,
+            concentration_warn_threshold_pct=concentration_warn_threshold_pct,
+        )
+    return audits
+
+
 def _pack_with_single_type(
     spec: ContainerSpec,
     pieces: list[Piece],
@@ -193,6 +213,10 @@ def estimate(
     special_specs: list[ContainerSpec] | None = None,
     small_lot_threshold_pieces: int = 2,
     small_lot_threshold_m3: Decimal | None = None,
+    vehicle_limit_kg: Decimal | None = Decimal("30000"),
+    payload_near_threshold_pct: Decimal = Decimal("90"),
+    concentration_top_n: int = 3,
+    concentration_warn_threshold_pct: Decimal = Decimal("70"),
 ) -> EstimateResult:
 
     oog_results = []
@@ -322,12 +346,20 @@ def estimate(
         unplaced = list(dedup.values())
 
     bias = _bias_by_container(loads, threshold_pct)
+    weight_audit = _weight_audit_by_container(
+        loads,
+        vehicle_limit_kg=vehicle_limit_kg,
+        payload_near_threshold_pct=payload_near_threshold_pct,
+        concentration_top_n=concentration_top_n,
+        concentration_warn_threshold_pct=concentration_warn_threshold_pct,
+    )
     return EstimateResult(
         placements=placements,
         unplaced=unplaced,
         oog_results=oog_results,
         summary_by_type=summary,
         bias_by_container=bias,
+        weight_audit_by_container=weight_audit,
         special_reason_by_piece=special_reason_by_piece,
         decision_reasons=decision_reasons,
     )
@@ -340,16 +372,28 @@ def validate(
     threshold_pct: Decimal,
     ref_spec: ContainerSpec,
     constraints: PackingConstraints | None = None,
+    vehicle_limit_kg: Decimal | None = Decimal("30000"),
+    payload_near_threshold_pct: Decimal = Decimal("90"),
+    concentration_top_n: int = 3,
+    concentration_warn_threshold_pct: Decimal = Decimal("70"),
 ) -> ValidateResult:
     in_gauge = sort_pieces(pieces)
     pack_result = pack_pieces(spec, in_gauge, max_containers=count, constraints=constraints)
     placements = [placement for load in pack_result.loads for placement in load.placements]
     bias = _bias_by_container(pack_result.loads, threshold_pct)
+    weight_audit = _weight_audit_by_container(
+        pack_result.loads,
+        vehicle_limit_kg=vehicle_limit_kg,
+        payload_near_threshold_pct=payload_near_threshold_pct,
+        concentration_top_n=concentration_top_n,
+        concentration_warn_threshold_pct=concentration_warn_threshold_pct,
+    )
     oog_results = [(piece, evaluate_oog(piece, ref_spec)) for piece in pieces]
     return ValidateResult(
         placements=placements,
         unplaced=pack_result.unplaced,
         bias_by_container=bias,
+        weight_audit_by_container=weight_audit,
         oog_results=oog_results,
         special_reason_by_piece={},
     )
