@@ -38,3 +38,28 @@ def test_load_cargo_csv_still_reuses_dataframe_normalization():
     loaded = load_cargo_csv(content)
     assert "id" in loaded.columns
     assert "weight_kg" in loaded.columns
+
+
+def test_load_cargo_dataframe_supports_japanese_template_headers():
+    df = pd.DataFrame(
+        [
+            {
+                "アイテム番号": 1,
+                "貨物名": "機械",
+                "数量": 2,
+                "長さ(cm)": 120,
+                "幅(cm)": 80,
+                "高さ(cm)": 60,
+                "重量(kg)": 350,
+                "回転可否(TRUE/FALSE)": "TRUE",
+                "積み重ね可否(TRUE/FALSE)": "FALSE",
+            }
+        ]
+    )
+
+    loaded = load_cargo_dataframe(df)
+
+    assert loaded.iloc[0]["id"] == 1
+    assert loaded.iloc[0]["desc"] == "機械"
+    assert loaded.iloc[0]["L_cm"] == 120
+    assert loaded.iloc[0]["rotate_allowed"] == "TRUE"
