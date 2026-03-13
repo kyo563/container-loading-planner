@@ -143,6 +143,13 @@ def normalize_cargo_rows(df: pd.DataFrame) -> list[CargoRow]:
     rows: list[CargoRow] = []
     for idx, row in df.iterrows():
         row_no = idx + 1
+        item_id = _text_or_empty(row.get("id"))
+        desc = _text_or_empty(row.get("desc"))
+
+        if not item_id:
+            raise CargoInputError(f"id は必須です (行 {row_no})")
+        if not desc:
+            raise CargoInputError(f"desc は必須です (行 {row_no})")
 
         def parse_decimal_field(field_name: str):
             raw = row.get(field_name)
@@ -188,8 +195,8 @@ def normalize_cargo_rows(df: pd.DataFrame) -> list[CargoRow]:
         if max_stack_load_kg is not None and max_stack_load_kg < 0:
             raise CargoInputError(f"max_stack_load_kgは0以上である必要があります (行 {row_no})")
         cargo = CargoRow(
-            id=str(row["id"]).strip(),
-            desc=str(row["desc"]).strip(),
+            id=item_id,
+            desc=desc,
             qty=qty,
             L_cm=L_cm,
             W_cm=W_cm,
