@@ -91,6 +91,8 @@ containers:
 REQUIRED_COLUMNS = ["id", "desc", "qty", "L_cm", "W_cm", "H_cm", "weight_kg"]
 OPTIONAL_COLUMNS = ["package_text", "rotate_allowed", "stackable", "max_stack_load_kg", "incompatible_with_ids"]
 ALL_COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
+CARGO_STRING_COLUMNS = ["id", "desc", "package_text", "incompatible_with_ids"]
+CARGO_FLOAT_COLUMNS = ["L_cm", "W_cm", "H_cm", "weight_kg", "max_stack_load_kg"]
 
 
 TEMPLATE_JA_COLUMNS = [
@@ -172,20 +174,68 @@ def _convert_dimension_to_cm(value: float, unit: str) -> Decimal:
 
 
 def _empty_cargo_df() -> pd.DataFrame:
-    return pd.DataFrame(columns=ALL_COLUMNS)
+    return pd.DataFrame(
+        {
+            "id": pd.Series(dtype="string"),
+            "desc": pd.Series(dtype="string"),
+            "qty": pd.Series(dtype="Int64"),
+            "L_cm": pd.Series(dtype="Float64"),
+            "W_cm": pd.Series(dtype="Float64"),
+            "H_cm": pd.Series(dtype="Float64"),
+            "weight_kg": pd.Series(dtype="Float64"),
+            "package_text": pd.Series(dtype="string"),
+            "rotate_allowed": pd.Series(dtype="boolean"),
+            "stackable": pd.Series(dtype="boolean"),
+            "max_stack_load_kg": pd.Series(dtype="Float64"),
+            "incompatible_with_ids": pd.Series(dtype="string"),
+        }
+    )[ALL_COLUMNS]
+
+
+def _coerce_bool_series(series: pd.Series) -> pd.Series:
+    lowered = series.astype("string").str.strip().str.lower()
+    true_values = {"true", "1", "t", "yes", "y", "on"}
+    false_values = {"false", "0", "f", "no", "n", "off"}
+    coerced = pd.Series(pd.NA, index=series.index, dtype="boolean")
+    coerced = coerced.mask(lowered.isin(true_values), True)
+    coerced = coerced.mask(lowered.isin(false_values), False)
+    return coerced
 
 
 def _normalize_cargo_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     for col in ALL_COLUMNS:
         if col not in out.columns:
-            out[col] = None
+            out[col] = pd.NA
     out = out[ALL_COLUMNS]
     if out.empty:
         return _empty_cargo_df()
-    out["rotate_allowed"] = out["rotate_allowed"].fillna(True)
-    out["stackable"] = out["stackable"].fillna(True)
-    out["incompatible_with_ids"] = out["incompatible_with_ids"].fillna("")
+
+    for col in CARGO_STRING_COLUMNS:
+        out[col] = out[col].astype("string")
+
+    qty_numeric = pd.to_numeric(out["qty"], errors="coerce")
+    qty_numeric = qty_numeric.where(qty_numeric.isna() | (qty_numeric % 1 == 0))
+    out["qty"] = qty_numeric.astype("Int64")
+
+    for col in CARGO_FLOAT_COLUMNS:
+        out[col] = pd.to_numeric(out[col], errors="coerce").astype("Float64")
+
+    out["rotate_allowed"] = _coerce_bool_series(out["rotate_allowed"]).fillna(True).astype("boolean")
+    out["stackable"] = _coerce_bool_series(out["stackable"]).fillna(True).astype("boolean")
+    out["incompatible_with_ids"] = out["incompatible_with_ids"].fillna("").astype("string")
+    return out
+
+
+def _coerce_for_data_editor(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    selected = None
+    if "selected" in out.columns:
+        selected = _coerce_bool_series(out["selected"]).fillna(False).astype(bool)
+        out = out.drop(columns=["selected"])
+    out = _normalize_cargo_dataframe(out)
+    if selected is not None:
+        out.insert(0, "selected", selected)
     return out
 
 
@@ -664,8 +714,9 @@ with main_tab:
     editable_df = st.session_state["cargo_df"].copy()
     saved_selection = st.session_state.get("cargo_selected", [])
     selected_values = (saved_selection + [False] * len(editable_df))[: len(editable_df)]
-    selected_series = pd.Series(selected_values, dtype="boolean").fillna(False).astype(bool)
+    selected_series = _coerce_bool_series(pd.Series(selected_values)).fillna(False).astype(bool)
     editable_df.insert(0, "selected", selected_series)
+    editable_df = _coerce_for_data_editor(editable_df)
 
     select_col1, select_col2 = st.columns(2)
     with select_col1:
@@ -695,6 +746,7 @@ with main_tab:
             "incompatible_with_ids": st.column_config.TextColumn("incompatible_with_ids"),
         },
     )
+    edited_df = _coerce_for_data_editor(edited_df)
 
     action_col1, action_col2 = st.columns(2)
     with action_col1:
@@ -714,7 +766,7 @@ with main_tab:
             else:
                 st.warning("変換対象の行を selected してください。")
 
-    st.session_state["cargo_selected"] = edited_df.get("selected", pd.Series(dtype=bool)).fillna(False).tolist()
+    st.session_state["cargo_selected"] = _coerce_bool_series(edited_df.get("selected", pd.Series(dtype="boolean"))).fillna(False).astype(bool).tolist()
     st.session_state["cargo_df"] = _normalize_cargo_dataframe(edited_df.drop(columns=["selected"], errors="ignore"))
 
     cargo_df = st.session_state.get("cargo_df", _empty_cargo_df())
