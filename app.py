@@ -302,6 +302,14 @@ def _format_cargo_input_error(exc: Exception) -> str:
     return f"入力の読み込みに失敗しました: {exc}"
 
 
+def _format_container_type_label(container_type: str) -> str:
+    if container_type == "OT":
+        return "OT（=40OT想定）"
+    if container_type == "FR":
+        return "FR（=40FR想定）"
+    return container_type
+
+
 def _read_cargo_uploaded_file(uploaded_file) -> pd.DataFrame:
     suffix = Path(uploaded_file.name).suffix.lower()
     content = uploaded_file.getvalue()
@@ -525,8 +533,8 @@ with st.sidebar:
     )
     container_order_text = st.text_input(
         "コンテナ表示順 (カンマ区切り)",
-        value="20GP,40GP,40HC,OT,FR,RF",
-        placeholder="例: 20GP,40GP,40HC,OT,FR,RF",
+        value="20GP,40GP,40HC,40OT,40FR,RF",
+        placeholder="例: 20GP,40GP,40HC,40OT,40FR,RF",
     )
     st.subheader("追加制約")
     max_cg_offset_x_pct = st.number_input("重心X偏差上限(%)", min_value=0.0, max_value=100.0, value=100.0)
@@ -876,7 +884,9 @@ with main_tab:
                 for ctype, count in special_counts.items():
                     summary_counts.setdefault(ctype, count)
                 summary_df = pd.DataFrame(summary_counts.items(), columns=["type", "count"])
+                summary_df["type"] = summary_df["type"].map(_format_container_type_label)
                 st.dataframe(summary_df, use_container_width=True)
+                st.caption("※ OT/FR は見積り上、40OT/40FR相当として表示しています。")
 
                 breakbulk_summary = getattr(result, "breakbulk_summary", {})
                 breakbulk_count = int(breakbulk_summary.get("count", 0))
@@ -923,7 +933,7 @@ with main_tab:
 
     else:
         st.subheader("必要コンテナ本数の確定")
-        st.caption("例: 20GP x2、40HC x1、OT x1 のように本数を入力してください。")
+        st.caption("例: 20GP x2、40HC x1、40OT x1 のように本数を入力してください。")
         if not execute_clicked:
             st.caption("本数入力後、「バンプラン作成を実行」を押してください。")
         count_cols = st.columns(3)
