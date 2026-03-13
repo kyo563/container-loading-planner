@@ -596,9 +596,6 @@ with main_tab:
         horizontal=True,
     )
     execute_label = "見積もり実行" if flow_mode == "コンテナ本数を見積もる" else "バンプラン作成を実行"
-    st.subheader("実行")
-    st.caption("下のボタンで、選択中のモードに応じた計算を実行します。")
-    execute_clicked = st.button(execute_label, type="primary", use_container_width=True)
 
     if flow_mode == "コンテナ本数を見積もる":
         st.info("このモードでは、貨物データを基に推奨コンテナ本数と配置結果を自動算出します。")
@@ -794,6 +791,10 @@ with main_tab:
         st.info("貨物データが未入力です。CSV読み込みまたはフォーム入力を行ってください。")
         st.stop()
 
+    st.subheader("実行")
+    st.caption("貨物データ反映後に、下のボタンで計算を実行します。")
+    execute_clicked = st.button(execute_label, type="primary", use_container_width=True)
+
     try:
         cargo_rows = normalize_cargo_rows(cargo_df)
         pieces = expand_pieces(cargo_rows)
@@ -817,7 +818,7 @@ with main_tab:
             candidates = list(standard_specs)
         st.caption("見積り優先順位: 40HC → 40GP → 20GP（20GPは少量または40HC積載後の残貨物向け）。40HCを計算基準に固定。")
         if not execute_clicked:
-            st.caption("準備ができたら上部の「見積もり実行」を押してください。")
+            st.caption("準備ができたら「見積もり実行」を押してください。")
 
         if execute_clicked:
             if not ref_spec:
@@ -877,7 +878,7 @@ with main_tab:
         st.subheader("必要コンテナ本数の確定")
         st.caption("例: 20GP x2、40HC x1、OT x1 のように本数を入力してください。")
         if not execute_clicked:
-            st.caption("本数入力後、上部の「バンプラン作成を実行」を押してください。")
+            st.caption("本数入力後、「バンプラン作成を実行」を押してください。")
         count_cols = st.columns(3)
         counts_by_type = {}
         for idx, spec in enumerate(container_specs):
