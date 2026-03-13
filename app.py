@@ -13,6 +13,7 @@ import yaml
 from container_planner import (
     CargoInputError,
     build_container_kpi_rows,
+    build_loading_plan_rows,
     build_placement_rows,
     estimate,
     expand_pieces,
@@ -346,6 +347,16 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
         f"{title_prefix} 配置CSVダウンロード",
         data=df.to_csv(index=False).encode("utf-8-sig"),
         file_name=f"{title_prefix.lower()}_placements.csv",
+        use_container_width=True,
+    )
+
+    loading_plan_df = build_loading_plan_rows(df)
+    st.subheader(f"{title_prefix} 積み付けプラン（手順）")
+    st.dataframe(loading_plan_df, use_container_width=True)
+    st.download_button(
+        f"{title_prefix} 積み付けプランCSVダウンロード",
+        data=loading_plan_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"{title_prefix.lower()}_loading_plan.csv",
         use_container_width=True,
     )
     st.download_button(

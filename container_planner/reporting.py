@@ -47,7 +47,7 @@ def build_placement_rows(
     weight_audit_lookup: Dict[tuple, WeightAuditMetrics] | None = None,
 ) -> pd.DataFrame:
     rows = []
-    for placement in placements:
+    for sequence_no, placement in enumerate(placements, start=1):
         piece = placement.piece
         oog = oog_lookup.get(piece.piece_id)
         bias = bias_lookup.get((placement.container_type, placement.container_index))
@@ -110,6 +110,7 @@ def build_placement_rows(
                 "payload_ratio_pct": weight_audit.payload_ratio_pct if weight_audit else Decimal("0"),
                 "vehicle_limit_ratio_pct": weight_audit.vehicle_limit_ratio_pct if weight_audit else Decimal("0"),
                 "weight_concentration_top_n_ratio_pct": weight_audit.concentration_top_n_ratio_pct if weight_audit else Decimal("0"),
+                "loading_sequence": sequence_no,
             }
         )
     df = pd.DataFrame(rows)
@@ -157,3 +158,32 @@ def build_container_kpi_rows(placements_df: pd.DataFrame) -> pd.DataFrame:
     )
     kpi_df["total_ft"] = (kpi_df["total_gross_kg"] / 1000).combine(kpi_df["total_m3"], max)
     return kpi_df[headers]
+
+
+def build_loading_plan_rows(placements_df: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "container_label",
+        "step",
+        "cargo_piece_id",
+        "desc",
+        "instruction",
+    ]
+    if placements_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    ordered = placements_df.copy()
+    if "loading_sequence" in ordered.columns:
+        ordered = ordered.sort_values(["container_type", "container_index", "loading_sequence", "cargo_piece_id"])
+    else:
+        ordered = ordered.sort_values(["container_type", "container_index", "placed_z_cm", "placed_y_cm", "placed_x_cm", "cargo_piece_id"])
+
+    ordered["step"] = ordered.groupby("container_label").cumcount() + 1
+    ordered["instruction"] = ordered.apply(
+        lambda row: (
+            f"{int(row['step'])}. {row['cargo_piece_id']} ({row['desc']}) を "
+            f"x={float(row['placed_x_cm']):.1f}cm, y={float(row['placed_y_cm']):.1f}cm, z={float(row['placed_z_cm']):.1f}cm に配置"
+        ),
+        axis=1,
+    )
+    return ordered[columns]
+
