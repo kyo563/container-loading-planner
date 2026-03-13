@@ -265,9 +265,30 @@ def _select_special_container_type(piece: Piece, base_type: str, special_specs: 
     if spec_40 is None:
         return spec_20.type
 
-    if _can_fit_piece_on_special_spec(piece, spec_20):
-        return spec_20.type
-    return spec_40.type
+    if _can_fit_piece_on_special_spec(piece, spec_40):
+        return spec_40.type
+    return spec_20.type
+
+
+def _sort_special_loads_for_fill(special_loads: list[ContainerLoad]) -> list[ContainerLoad]:
+    def priority(load: ContainerLoad) -> tuple[int, str]:
+        ctype = load.spec.type
+        if ctype.endswith("OT"):
+            return (0, ctype)
+        if ctype.endswith("FR"):
+            return (1, ctype)
+        return (2, ctype)
+
+    return sorted(special_loads, key=priority)
+
+
+def _filter_fr_forbidden_small_cargo(pieces: list[Piece], spec: ContainerSpec) -> tuple[list[Piece], list[Piece]]:
+    if not spec.type.endswith("FR"):
+        return pieces, []
+
+    allowed = [piece for piece in pieces if piece.m3 > Decimal("1")]
+    forbidden = [piece for piece in pieces if piece.m3 <= Decimal("1")]
+    return allowed, forbidden
 
 
 def _pack_special_only(
@@ -297,7 +318,7 @@ def _fill_existing_special_loads(
 ) -> tuple[list[ContainerLoad], list[Piece]]:
     remaining_in_gauge = list(in_gauge)
 
-    for load in special_loads:
+    for load in _sort_special_loads_for_fill(special_loads):
         if not remaining_in_gauge:
             break
         spec = load.spec
@@ -308,9 +329,13 @@ def _fill_existing_special_loads(
         if not fixed_special:
             continue
 
+        fill_candidates, _ = _filter_fr_forbidden_small_cargo(remaining_in_gauge, spec)
+        if not fill_candidates:
+            continue
+
         refill = pack_pieces(
             spec,
-            sort_pieces(fixed_special) + sort_pieces_for_special_fill(remaining_in_gauge),
+            sort_pieces(fixed_special) + sort_pieces_for_special_fill(fill_candidates),
             max_containers=1,
             constraints=constraints,
         )
@@ -321,8 +346,6 @@ def _fill_existing_special_loads(
         remaining_in_gauge = [piece for piece in remaining_in_gauge if piece.piece_id not in placed_ids]
 
     return special_loads, remaining_in_gauge
-
-
 
 
 def _special_spec_has_inner_dims(spec: ContainerSpec) -> bool:
