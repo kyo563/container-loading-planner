@@ -304,9 +304,9 @@ def _format_cargo_input_error(exc: Exception) -> str:
 
 def _format_container_type_label(container_type: str) -> str:
     if container_type == "OT":
-        return "OT（=40OT想定）"
+        return "40OT"
     if container_type == "FR":
-        return "FR（=40FR想定）"
+        return "40FR"
     return container_type
 
 
@@ -886,7 +886,7 @@ with main_tab:
                 summary_df = pd.DataFrame(summary_counts.items(), columns=["type", "count"])
                 summary_df["type"] = summary_df["type"].map(_format_container_type_label)
                 st.dataframe(summary_df, use_container_width=True)
-                st.caption("※ OT/FR は見積り上、40OT/40FR相当として表示しています。")
+                st.caption("※ 特殊コンテナは見積り上、40OT/40FRとして表示しています。")
 
                 breakbulk_summary = getattr(result, "breakbulk_summary", {})
                 breakbulk_count = int(breakbulk_summary.get("count", 0))
