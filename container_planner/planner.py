@@ -233,14 +233,12 @@ def _select_special_container_type(piece: Piece, base_type: str, special_specs: 
     return spec_40.type
 
 
-def _pack_special_and_fill(
+def _pack_special_only(
     pieces_by_type: dict[str, list[Piece]],
     special_specs: dict[str, ContainerSpec],
-    in_gauge: list[Piece],
     constraints: PackingConstraints | None,
-) -> tuple[list[ContainerLoad], list[Piece]]:
+) -> list[ContainerLoad]:
     special_loads: list[ContainerLoad] = []
-    remaining_in_gauge = list(in_gauge)
 
     for container_type, special_pieces in pieces_by_type.items():
         if not special_pieces:
@@ -252,21 +250,38 @@ def _pack_special_and_fill(
         packed_special = pack_pieces(spec, sort_pieces(special_pieces), constraints=constraints)
         special_loads.extend(packed_special.loads)
 
-        for load in packed_special.loads:
-            fixed_special = [pl.piece for pl in load.placements if pl.piece.piece_id in {p.piece_id for p in special_pieces}]
-            if not fixed_special or not remaining_in_gauge:
-                continue
-            refill = pack_pieces(
-                spec,
-                sort_pieces(fixed_special) + sort_pieces_for_special_fill(remaining_in_gauge),
-                max_containers=1,
-                constraints=constraints,
-            )
-            if not refill.loads:
-                continue
-            load.placements = refill.loads[0].placements
-            placed_ids = {pl.piece.piece_id for pl in load.placements}
-            remaining_in_gauge = [piece for piece in remaining_in_gauge if piece.piece_id not in placed_ids]
+    return special_loads
+
+
+def _fill_existing_special_loads(
+    special_loads: list[ContainerLoad],
+    in_gauge: list[Piece],
+    constraints: PackingConstraints | None,
+) -> tuple[list[ContainerLoad], list[Piece]]:
+    remaining_in_gauge = list(in_gauge)
+
+    for load in special_loads:
+        if not remaining_in_gauge:
+            break
+        spec = load.spec
+        if not _special_spec_has_inner_dims(spec):
+            continue
+
+        fixed_special = [pl.piece for pl in load.placements]
+        if not fixed_special:
+            continue
+
+        refill = pack_pieces(
+            spec,
+            sort_pieces(fixed_special) + sort_pieces_for_special_fill(remaining_in_gauge),
+            max_containers=1,
+            constraints=constraints,
+        )
+        if not refill.loads:
+            continue
+        load.placements = refill.loads[0].placements
+        placed_ids = {pl.piece.piece_id for pl in load.placements}
+        remaining_in_gauge = [piece for piece in remaining_in_gauge if piece.piece_id not in placed_ids]
 
     return special_loads, remaining_in_gauge
 
@@ -341,79 +356,31 @@ def estimate(
         else:
             in_gauge.append(piece)
 
-    special_loads, remaining_in_gauge = _pack_special_and_fill(
+    special_loads = _pack_special_only(
         pieces_by_special_type,
         special_spec_map,
-        in_gauge,
         constraints,
     )
-    in_gauge = sort_pieces(remaining_in_gauge)
+    in_gauge = sort_pieces(in_gauge)
 
     best = None
     decision_reasons: list[str] = []
     if mode == "FIXED_PRIORITY":
-        priority_order = {"40HC": 0, "40GP": 1, "20GP": 2}
-        spec_by_type = {spec.type: spec for spec in standard_specs}
-        total_m3 = sum((piece.m3 for piece in in_gauge), Decimal("0"))
-        meets_piece_threshold = len(in_gauge) <= small_lot_threshold_pieces
-        meets_m3_threshold = small_lot_threshold_m3 is not None and total_m3 <= small_lot_threshold_m3
-        allow_20gp_small_lot = meets_piece_threshold or meets_m3_threshold
+        preferred_40hc = _pick_standard_spec(standard_specs, "40HC")
+        if preferred_40hc:
+            loads, unplaced = _pack_with_single_type(preferred_40hc, in_gauge, constraints=constraints)
+        else:
+            loads, unplaced = _pack_with_single_type(standard_specs[0], in_gauge, constraints=constraints)
 
-        ordered_specs = sorted(standard_specs, key=lambda s: priority_order.get(s.type, 99))
-        single_results = {
-            spec.type: _pack_with_single_type(spec, in_gauge, constraints=constraints)
-            for spec in ordered_specs
-        }
+        special_loads, unplaced = _fill_existing_special_loads(special_loads, unplaced, constraints)
 
-        for spec in ordered_specs:
-            if spec.type == "20GP" and not allow_20gp_small_lot:
-                continue
-            loads_candidate, unplaced_candidate = single_results.get(spec.type, ([], in_gauge))
-            if unplaced_candidate:
-                continue
-            score = (len(loads_candidate), priority_order.get(spec.type, 99))
-            if best is None or score < best[0]:
-                best = (score, loads_candidate, unplaced_candidate)
-
-        loads_40hc, unplaced_40hc = single_results.get("40HC", ([], in_gauge))
-        loads_40gp, unplaced_40gp = single_results.get("40GP", ([], in_gauge))
-        if not unplaced_40hc and not unplaced_40gp and len(loads_40hc) == len(loads_40gp):
-            best = ((len(loads_40gp), priority_order.get("40GP", 99)), loads_40gp, unplaced_40gp)
-            decision_reasons.append("40GP推奨: 40HCと同等収容（同本数）")
-
-        if best is None:
-            for spec in ordered_specs:
-                if spec.type == "20GP" and not allow_20gp_small_lot:
-                    continue
-                loads_candidate, unplaced_candidate = single_results.get(spec.type, ([], in_gauge))
-                score = (len(unplaced_candidate), len(loads_candidate), priority_order.get(spec.type, 99))
-                if best is None or score < best[0]:
-                    best = (score, loads_candidate, unplaced_candidate)
-
-            spec_20gp = spec_by_type.get("20GP")
-            if loads_40hc and unplaced_40hc and spec_20gp:
-                residual_loads_20gp, residual_unplaced = _pack_with_single_type(
-                    spec_20gp,
-                    unplaced_40hc,
-                    constraints=constraints,
-                )
-                combo_loads = [*loads_40hc, *residual_loads_20gp]
-                score = (len(residual_unplaced), len(combo_loads), priority_order.get("40HC", 99))
-                if best is None or score < best[0]:
-                    best = (score, combo_loads, residual_unplaced)
-                    decision_reasons.append("20GP採用: 40HC採用後の残貨物処理")
-
-        if allow_20gp_small_lot:
-            if meets_piece_threshold and meets_m3_threshold:
-                decision_reasons.append(
-                    f"20GP許可: 小口閾値（piece<= {small_lot_threshold_pieces} または m3<= {small_lot_threshold_m3}）"
-                )
-            elif meets_piece_threshold:
-                decision_reasons.append(f"20GP許可: 小口閾値（piece<= {small_lot_threshold_pieces}）")
-            elif meets_m3_threshold:
-                decision_reasons.append(f"20GP許可: 小口閾値（m3<= {small_lot_threshold_m3}）")
-
-        _, loads, unplaced = best
+        if unplaced:
+            preferred_20gp = _pick_standard_spec(standard_specs, "20GP")
+            if preferred_20gp:
+                tail_loads, unplaced = _pack_with_single_type(preferred_20gp, unplaced, constraints=constraints)
+                loads.extend(tail_loads)
+                if tail_loads:
+                    decision_reasons.append("20GP採用: 特殊コンテナおよび40HC積載後の残貨物処理")
     elif algorithm == "MULTI_TYPE":
         decision_reasons = []
         loads, unplaced = _pack_with_multi_type(standard_specs, in_gauge, mode, constraints=constraints)
