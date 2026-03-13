@@ -258,6 +258,27 @@ def _read_cargo_text_input(text: str) -> pd.DataFrame:
     return _coerce_cargo_df(data)
 
 
+def _format_cargo_input_error(exc: Exception) -> str:
+    if isinstance(exc, EmptyDataError):
+        if "No columns to parse from file" in str(exc):
+            return "ファイルが空です。ヘッダー行を含むCSVを指定してください。"
+        return "ヘッダ不一致またはデータ空: 列ヘッダ/データ行を確認してください。"
+
+    if isinstance(exc, CargoInputError):
+        msg = str(exc)
+        if "必須カラム" in msg:
+            return f"ヘッダ不一致: {msg}"
+        return msg
+
+    if isinstance(exc, UnicodeDecodeError):
+        return "文字コード不正: UTF-8のCSVを指定してください。"
+
+    if isinstance(exc, ValueError):
+        return f"シート空または形式不正: {exc}"
+
+    return f"入力の読み込みに失敗しました: {exc}"
+
+
 def _read_cargo_uploaded_file(uploaded_file) -> pd.DataFrame:
     suffix = Path(uploaded_file.name).suffix.lower()
     content = uploaded_file.getvalue()
@@ -616,8 +637,10 @@ with main_tab:
             sample_df = load_cargo_csv(_read_text("data/cargo.sample.csv"))
             st.session_state["cargo_df"] = _normalize_cargo_dataframe(sample_df)
             st.success("サンプル貨物を読み込みました。")
+        except (EmptyDataError, CargoInputError, UnicodeDecodeError, ValueError) as exc:
+            st.error(_format_cargo_input_error(exc))
         except Exception as exc:  # noqa: BLE001
-            st.error(f"サンプル貨物の読み込みに失敗しました: {exc}")
+            st.error(_format_cargo_input_error(exc))
 
     if csv_col2.button("貨物入力を反映", use_container_width=True):
         try:
@@ -629,20 +652,10 @@ with main_tab:
                 st.warning("CSV/XLSXをアップロードするか、CSV/TSVテキストを入力してください。")
             if cargo_file is not None or cargo_text.strip():
                 st.success("貨物データを反映しました。")
-        except UnicodeDecodeError:
-            st.error("文字コード不正: UTF-8のCSVを指定してください。")
-        except EmptyDataError:
-            st.error("ヘッダ不一致またはデータ空: 列ヘッダ/データ行を確認してください。")
-        except CargoInputError as exc:
-            msg = str(exc)
-            if "必須カラム" in msg:
-                st.error(f"ヘッダ不一致: {msg}")
-            else:
-                st.error(msg)
-        except ValueError as exc:
-            st.error(f"シート空または形式不正: {exc}")
+        except (EmptyDataError, CargoInputError, UnicodeDecodeError, ValueError) as exc:
+            st.error(_format_cargo_input_error(exc))
         except Exception as exc:  # noqa: BLE001
-            st.error(f"入力の読み込みに失敗しました: {exc}")
+            st.error(_format_cargo_input_error(exc))
 
     st.subheader("貨物データのクイック追加")
     quick_col1, quick_col2, quick_col3, quick_col4 = st.columns(4)
