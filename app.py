@@ -839,13 +839,27 @@ with main_tab:
 
                 st.subheader("推奨本数")
                 special_counts, _ = summarize_special_container_needs(result.oog_results)
-                summary_df = pd.DataFrame(result.summary_by_type.items(), columns=["type", "count"])
-                if special_counts:
-                    summary_df = pd.concat(
-                        [summary_df, pd.DataFrame(special_counts.items(), columns=["type", "count"])],
-                        ignore_index=True,
-                    )
+                summary_counts = dict(result.summary_by_type)
+                for ctype, count in special_counts.items():
+                    summary_counts.setdefault(ctype, count)
+                summary_df = pd.DataFrame(summary_counts.items(), columns=["type", "count"])
                 st.dataframe(summary_df, use_container_width=True)
+
+                breakbulk_summary = getattr(result, "breakbulk_summary", {})
+                breakbulk_count = int(breakbulk_summary.get("count", 0))
+                if breakbulk_count > 0:
+                    st.info("一部貨物はコンテナ積載不可のため、在来船を推奨します。")
+                    breakbulk_df = pd.DataFrame(
+                        [
+                            {
+                                "区分": "在来船相当貨物（除外）",
+                                "個数": breakbulk_count,
+                                "重量(kg)": float(breakbulk_summary.get("total_weight_kg", 0)),
+                                "F/T(m3)": float(breakbulk_summary.get("total_ft_m3", 0)),
+                            }
+                        ]
+                    )
+                    st.dataframe(breakbulk_df, use_container_width=True)
                 st.download_button(
                     "本数見積CSVダウンロード",
                     data=summary_df.to_csv(index=False).encode("utf-8-sig"),
