@@ -853,11 +853,19 @@ with main_tab:
 
     if flow_mode == "コンテナ本数を見積もる":
         st.subheader("必要本数の自動計算")
-        fixed_candidate_order = ["40HC", "40GP", "20GP"]
-        candidates = [spec for t in fixed_candidate_order for spec in standard_specs if spec.type == t]
-        if not candidates:
-            candidates = list(standard_specs)
-        st.caption("見積り優先順位: 40HC → 40GP → 20GP（20GPは少量または40HC積載後の残貨物向け）。40HCを計算基準に固定。")
+        standard_by_type = {spec.type: spec for spec in standard_specs}
+        ordered_candidate_types = [t for t in container_order if t in standard_by_type]
+        remaining_standard_types = [spec.type for spec in standard_specs if spec.type not in ordered_candidate_types]
+        candidate_types = ordered_candidate_types + remaining_standard_types
+        candidates = [standard_by_type[t] for t in candidate_types]
+
+        if ordered_candidate_types:
+            st.caption(
+                "見積り候補は STANDARD コンテナ全種です。優先順はサイドバーの「コンテナ表示順」を使用し、"
+                "未指定タイプは containers.yaml の定義順で続けて評価します。"
+            )
+        else:
+            st.caption("見積り候補は STANDARD コンテナ全種です。containers.yaml の定義順で評価します。")
         if not execute_clicked:
             st.caption("準備ができたら「見積もり実行」を押してください。")
 
