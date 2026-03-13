@@ -93,6 +93,51 @@ OPTIONAL_COLUMNS = ["package_text", "rotate_allowed", "stackable", "max_stack_lo
 ALL_COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
 
 
+TEMPLATE_JA_COLUMNS = [
+    "アイテム番号",
+    "貨物名",
+    "数量",
+    "長さ(cm)",
+    "幅(cm)",
+    "高さ(cm)",
+    "重量(kg)",
+    "荷姿",
+    "回転可否(TRUE/FALSE)",
+    "積み重ね可否(TRUE/FALSE)",
+    "上積み許容(kg)",
+    "混載不可アイテム番号",
+]
+
+
+def _build_blank_cargo_template_df() -> pd.DataFrame:
+    rows = []
+    for item_no in range(1, 151):
+        rows.append(
+            {
+                "アイテム番号": item_no,
+                "貨物名": "",
+                "数量": "",
+                "長さ(cm)": "",
+                "幅(cm)": "",
+                "高さ(cm)": "",
+                "重量(kg)": "",
+                "荷姿": "",
+                "回転可否(TRUE/FALSE)": "",
+                "積み重ね可否(TRUE/FALSE)": "",
+                "上積み許容(kg)": "",
+                "混載不可アイテム番号": "",
+            }
+        )
+    return pd.DataFrame(rows, columns=TEMPLATE_JA_COLUMNS)
+
+
+def _build_blank_cargo_template_xlsx(df: pd.DataFrame) -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="cargo_template")
+    return output.getvalue()
+
+
 def _to_decimal(value):
     if value is None:
         return None
@@ -494,17 +539,26 @@ with main_tab:
         )
 
     st.caption("CSV/XLSXのヘッダーは簡易英語入力に対応しています（例: ItemID / CargoName / Qty / L / W / H / Gross / Style）。貼り付け欄はTSV（Excelコピー）/CSVを自動判定します。単位は L/W/H=cm、Gross=kg です。")
+    blank_template_df = _build_blank_cargo_template_df()
     template_col1, template_col2 = st.columns(2)
     with template_col1:
         st.download_button(
-            "貨物CSVテンプレートをダウンロード",
-            data=_read_text("data/cargo.template.csv").encode("utf-8-sig"),
-            file_name="cargo_template.csv",
+            "記入用ブランクフォームを発行（CSV）",
+            data=blank_template_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="cargo_blank_form.csv",
             mime="text/csv",
             use_container_width=True,
         )
+        st.download_button(
+            "記入用ブランクフォームを発行（XLSX）",
+            data=_build_blank_cargo_template_xlsx(blank_template_df),
+            file_name="cargo_blank_form.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
     with template_col2:
-        st.caption("任意列（Style/Rotate/Stackable/MaxTopLoad/IncompatibleIDs）も含むテンプレートです。")
+        st.caption("A列にアイテム番号1〜150を事前入力したブランクフォームです。151以上もそのまま追記して利用できます。")
+        st.caption("列名は日本語で記載しています。アップロード時はそのまま読み込めます。")
 
     csv_col1, csv_col2 = st.columns(2)
     if csv_col1.button("サンプル貨物を読み込む", use_container_width=True):

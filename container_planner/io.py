@@ -60,6 +60,18 @@ COLUMN_ALIASES = {
     "maxstackload": "max_stack_load_kg",
     "incompatibleids": "incompatible_with_ids",
     "incompatible": "incompatible_with_ids",
+    "アイテム番号": "id",
+    "貨物名": "desc",
+    "数量": "qty",
+    "長さcm": "L_cm",
+    "幅cm": "W_cm",
+    "高さcm": "H_cm",
+    "重量kg": "weight_kg",
+    "荷姿": "package_text",
+    "回転可否truefalse": "rotate_allowed",
+    "積み重ね可否truefalse": "stackable",
+    "上積み許容kg": "max_stack_load_kg",
+    "混載不可アイテム番号": "incompatible_with_ids",
 }
 
 
