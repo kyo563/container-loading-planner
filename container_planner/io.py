@@ -108,6 +108,12 @@ def _parse_bool(value, default: bool) -> bool:
     return default
 
 
+def _text_or_empty(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
 def load_cargo_csv(content: str) -> pd.DataFrame:
     data = pd.read_csv(io.StringIO(content))
     return load_cargo_dataframe(data)
@@ -189,11 +195,11 @@ def normalize_cargo_rows(df: pd.DataFrame) -> list[CargoRow]:
             W_cm=W_cm,
             H_cm=H_cm,
             weight_kg=weight_kg,
-            package_text=str(row.get("package_text", "") or ""),
+            package_text=_text_or_empty(row.get("package_text", "")),
             rotate_allowed=_parse_bool(row.get("rotate_allowed"), True),
             stackable=_parse_bool(row.get("stackable"), True),
             max_stack_load_kg=max_stack_load_kg,
-            incompatible_with_ids=str(row.get("incompatible_with_ids", "") or ""),
+            incompatible_with_ids=_text_or_empty(row.get("incompatible_with_ids", "")),
         )
         rows.append(cargo)
     return rows

@@ -588,15 +588,22 @@ st.caption(f"OOG判定基準コンテナ: {ref_choice}（見積り基準）")
 
 with main_tab:
     st.header("計画作成")
-    st.caption("①本数条件を選択 → ②パッキングリスト入力 → ③バンプラン作成 の順で進めます。")
+    st.caption("①本数条件を選択 → ②パッキングリスト入力 → ③実行ボタン押下 の順で進めます。")
 
     flow_mode = st.radio(
         "まずどちらで進めますか？",
         options=["コンテナ本数が決まっている", "コンテナ本数を見積もる"],
         horizontal=True,
     )
-    execute_clicked = st.button("見積もり開始 / バンプラン実行", type="primary", use_container_width=True)
-    st.caption("上のボタンを押すと、現在のモード設定で計算を実行します。")
+    execute_label = "見積もり実行" if flow_mode == "コンテナ本数を見積もる" else "バンプラン作成を実行"
+    st.subheader("実行")
+    st.caption("下のボタンで、選択中のモードに応じた計算を実行します。")
+    execute_clicked = st.button(execute_label, type="primary", use_container_width=True)
+
+    if flow_mode == "コンテナ本数を見積もる":
+        st.info("このモードでは、貨物データを基に推奨コンテナ本数と配置結果を自動算出します。")
+    else:
+        st.info("このモードでは、下部で入力したコンテナ本数を使って配置計画を作成します。")
 
     st.subheader("パッキングリスト入力")
     cargo_col1, cargo_col2 = st.columns(2)
@@ -809,6 +816,8 @@ with main_tab:
         if not candidates:
             candidates = list(standard_specs)
         st.caption("見積り優先順位: 40HC → 40GP → 20GP（20GPは少量または40HC積載後の残貨物向け）。40HCを計算基準に固定。")
+        if not execute_clicked:
+            st.caption("準備ができたら上部の「見積もり実行」を押してください。")
 
         if execute_clicked:
             if not ref_spec:
@@ -867,6 +876,8 @@ with main_tab:
     else:
         st.subheader("必要コンテナ本数の確定")
         st.caption("例: 20GP x2、40HC x1、OT x1 のように本数を入力してください。")
+        if not execute_clicked:
+            st.caption("本数入力後、上部の「バンプラン作成を実行」を押してください。")
         count_cols = st.columns(3)
         counts_by_type = {}
         for idx, spec in enumerate(container_specs):
