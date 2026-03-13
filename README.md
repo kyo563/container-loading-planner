@@ -231,7 +231,7 @@ python -m compileall app.py container_planner
 
 - 基本設計: `docs/basic_design.md`
 - サンプル入力:
-  - `data/cargo.sample.csv`
+  - `data/cargo.sample.csv`（`id,desc,qty,L_cm,W_cm,H_cm,weight_kg` を含むCSV。寸法はcm、重量はkg。`qty` と寸法/重量は0より大きい値を想定）
   - `data/package_master.sample.csv`
   - `data/containers.sample.yaml`
 

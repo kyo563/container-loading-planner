@@ -1,1 +1,4 @@
-
+id,desc,qty,L_cm,W_cm,H_cm,weight_kg,package_text,rotate_allowed,stackable,max_stack_load_kg,incompatible_with_ids
+A1001,Steel Coil,2,120,120,90,850,PALLET,true,false,,
+B2001,Carton Boxes,5,60,40,35,18,CARTON,true,true,220,
+C3001,Precision Machine,1,210,95,140,420,CRATE,false,false,,A1001
