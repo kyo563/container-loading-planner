@@ -147,6 +147,8 @@ class EstimateResult:
     weight_audit_by_container: dict[tuple[str, int], WeightAuditMetrics] = field(default_factory=dict)
     special_reason_by_piece: dict[str, str] = field(default_factory=dict)
     decision_reasons: list[str] = field(default_factory=list)
+    breakbulk_summary: dict[str, Decimal | int] = field(default_factory=dict)
+    breakbulk_piece_ids: list[str] = field(default_factory=list)
 
 
 @dataclass

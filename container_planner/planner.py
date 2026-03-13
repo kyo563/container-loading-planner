@@ -193,6 +193,8 @@ def _pack_special_and_fill(
         spec = special_specs.get(container_type)
         if spec is None:
             continue
+        if not _special_spec_has_inner_dims(spec):
+            continue
         pack_target = sort_pieces(special_pieces) + sort_pieces_for_special_fill(remaining_in_gauge)
         packed = pack_pieces(spec, pack_target, constraints=constraints)
         special_loads.extend(packed.loads)
@@ -202,6 +204,33 @@ def _pack_special_and_fill(
     return special_loads, remaining_in_gauge
 
 
+
+
+def _special_spec_has_inner_dims(spec: ContainerSpec) -> bool:
+    return spec.inner_L_cm is not None and spec.inner_W_cm is not None and spec.inner_H_cm is not None
+
+
+def _is_breakbulk_required(piece: Piece, fr_spec: ContainerSpec | None) -> bool:
+    deck_L = (fr_spec.deck_L_cm if fr_spec and fr_spec.deck_L_cm is not None else Decimal("1160"))
+    deck_W = (fr_spec.deck_W_cm if fr_spec and fr_spec.deck_W_cm is not None else Decimal("240"))
+    max_payload = (fr_spec.max_payload_kg if fr_spec and fr_spec.max_payload_kg is not None else Decimal("34000"))
+
+    fits_footprint = (piece.L_cm <= deck_L and piece.W_cm <= deck_W) or (piece.W_cm <= deck_L and piece.L_cm <= deck_W)
+    if not fits_footprint:
+        return True
+    if piece.weight_kg > max_payload:
+        return True
+    return False
+
+
+def _build_breakbulk_summary(pieces: list[Piece]) -> dict[str, Decimal | int]:
+    total_weight = sum((piece.weight_kg for piece in pieces), Decimal("0"))
+    total_m3 = sum((piece.m3 for piece in pieces), Decimal("0"))
+    return {
+        "count": len(pieces),
+        "total_weight_kg": total_weight,
+        "total_ft_m3": total_m3,
+    }
 def estimate(
     pieces: list[Piece],
     standard_specs: list[ContainerSpec],
@@ -225,8 +254,14 @@ def estimate(
     special_piece_ids: set[str] = set()
     pieces_by_special_type: dict[str, list[Piece]] = {"FR": [], "OT": [], "RF": []}
     special_spec_map = {spec.type: spec for spec in (special_specs or [])}
+    fr_spec = special_spec_map.get("FR")
+    breakbulk_excluded: list[Piece] = []
 
     for piece in pieces:
+        if _is_breakbulk_required(piece, fr_spec):
+            breakbulk_excluded.append(piece)
+            special_reason_by_piece[piece.piece_id] = "在来船推奨（40FR想定でも積載不可）"
+            continue
         oog = evaluate_oog(piece, ref_spec)
         if oog.oog_flag:
             oog_results.append((piece, oog))
@@ -337,7 +372,9 @@ def estimate(
     placements = [placement for load in loads for placement in load.placements]
     summary = Counter([load.spec.type for load in loads])
 
-    unplaced_special = [piece for piece in pieces if piece.piece_id in special_piece_ids and piece.piece_id not in {pl.piece.piece_id for pl in placements}]
+    planned_piece_ids = {piece.piece_id for piece in breakbulk_excluded}
+    planned_piece_ids.update(piece.piece_id for piece in pieces if piece.piece_id in special_piece_ids)
+    unplaced_special = [piece for piece in pieces if piece.piece_id in planned_piece_ids and piece.piece_id not in {pl.piece.piece_id for pl in placements}]
     if unplaced_special:
         unplaced.extend(unplaced_special)
         dedup = {}
@@ -353,6 +390,8 @@ def estimate(
         concentration_top_n=concentration_top_n,
         concentration_warn_threshold_pct=concentration_warn_threshold_pct,
     )
+    if breakbulk_excluded:
+        decision_reasons.append("一部貨物はコンテナ積載不可のため、在来船を推奨します。")
     return EstimateResult(
         placements=placements,
         unplaced=unplaced,
@@ -362,6 +401,8 @@ def estimate(
         weight_audit_by_container=weight_audit,
         special_reason_by_piece=special_reason_by_piece,
         decision_reasons=decision_reasons,
+        breakbulk_summary=_build_breakbulk_summary(breakbulk_excluded),
+        breakbulk_piece_ids=[piece.piece_id for piece in breakbulk_excluded],
     )
 
 
