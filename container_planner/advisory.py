@@ -9,7 +9,11 @@ TARE_WEIGHT_KG = {
     "20GP": Decimal("2300"),
     "40GP": Decimal("3800"),
     "40HC": Decimal("3900"),
+    "20OT": Decimal("2300"),
+    "40OT": Decimal("4200"),
     "OT": Decimal("4200"),
+    "20FR": Decimal("2800"),
+    "40FR": Decimal("5500"),
     "FR": Decimal("5500"),
     "RF": Decimal("4800"),
 }

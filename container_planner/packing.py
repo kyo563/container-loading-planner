@@ -59,11 +59,14 @@ class ShelfPacker:
         by2 = b.placed_y_cm + b.orient_W_cm
         return a.placed_x_cm < bx2 and ax2 > b.placed_x_cm and a.placed_y_cm < by2 and ay2 > b.placed_y_cm
 
+    def _is_flatrack(self) -> bool:
+        return self.spec.type.endswith("FR")
+
     def _container_allows_stacking(self) -> bool:
-        return self.spec.type != "FR"
+        return not self._is_flatrack()
 
     def _container_allows_piece(self, piece: Piece) -> bool:
-        if self.spec.type == "FR" and piece.m3 <= Decimal("2"):
+        if self._is_flatrack() and piece.m3 <= Decimal("2"):
             return False
         return True
 
