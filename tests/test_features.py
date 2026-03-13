@@ -137,8 +137,8 @@ def test_fixed_priority_prefers_40hc_when_same_container_count():
     spec_40hc = ContainerSpec(
         type="40HC",
         category="STANDARD",
-        inner_L_cm=Decimal("220"),
-        inner_W_cm=Decimal("100"),
+        inner_L_cm=Decimal("300"),
+        inner_W_cm=Decimal("120"),
         inner_H_cm=Decimal("120"),
         max_payload_kg=Decimal("1000"),
         cost=Decimal("130"),
@@ -493,3 +493,91 @@ def test_special_container_count_is_based_on_oog_only():
 
     fr_placements = [pl for pl in result.placements if pl.container_type == "20FR"]
     assert len(fr_placements) == 1
+
+
+def test_estimate_routes_ow_to_fr():
+    df = pd.DataFrame(
+        [
+            {"id": "A", "desc": "ow-cargo", "qty": 1, "L_cm": 260, "W_cm": 100, "H_cm": 90, "weight_kg": 500},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    ref_40hc = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("220"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("100"),
+        max_payload_kg=Decimal("30000"),
+    )
+    spec_standard = _base_spec("40HC", "100")
+    spec_20fr = ContainerSpec(
+        type="20FR",
+        category="SPECIAL",
+        inner_L_cm=Decimal("300"),
+        inner_W_cm=Decimal("120"),
+        inner_H_cm=Decimal("150"),
+        deck_L_cm=Decimal("300"),
+        deck_W_cm=Decimal("120"),
+        max_payload_kg=Decimal("34000"),
+    )
+
+    result = estimate(
+        pieces,
+        [spec_standard],
+        ref_40hc,
+        Decimal("20"),
+        "FIXED_PRIORITY",
+        "SINGLE_TYPE",
+        special_specs=[spec_20fr],
+    )
+
+    assert any(pl.container_type == "20FR" for pl in result.placements)
+
+
+def test_estimate_prefers_ot_when_only_oh_oog():
+    df = pd.DataFrame(
+        [
+            {"id": "A", "desc": "oh-only", "qty": 1, "L_cm": 180, "W_cm": 90, "H_cm": 120, "weight_kg": 500},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    ref_40hc = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("220"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("100"),
+        max_payload_kg=Decimal("30000"),
+    )
+    spec_standard = _base_spec("40HC", "100")
+    spec_20ot = ContainerSpec(
+        type="20OT",
+        category="SPECIAL",
+        inner_L_cm=Decimal("220"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("150"),
+        max_payload_kg=Decimal("28000"),
+    )
+    spec_20fr = ContainerSpec(
+        type="20FR",
+        category="SPECIAL",
+        inner_L_cm=Decimal("220"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("150"),
+        deck_L_cm=Decimal("300"),
+        deck_W_cm=Decimal("120"),
+        max_payload_kg=Decimal("34000"),
+    )
+
+    result = estimate(
+        pieces,
+        [spec_standard],
+        ref_40hc,
+        Decimal("20"),
+        "FIXED_PRIORITY",
+        "SINGLE_TYPE",
+        special_specs=[spec_20ot, spec_20fr],
+    )
+
+    assert any(pl.container_type == "20OT" for pl in result.placements)
