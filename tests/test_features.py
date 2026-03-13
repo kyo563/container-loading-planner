@@ -387,3 +387,110 @@ def test_weight_audit_detects_concentration_warning():
     audit = result.weight_audit_by_container[("20GP", 1)]
     assert audit.weight_alert is True
     assert "重量貨物集中度高" in audit.weight_alert_message
+
+
+def test_estimate_uses_20fr_for_smaller_oog_piece():
+    df = pd.DataFrame(
+        [
+            {"id": "A", "desc": "small-ow", "qty": 1, "L_cm": 240, "W_cm": 236, "H_cm": 236, "weight_kg": 3000},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    spec_40hc = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("1203"),
+        inner_W_cm=Decimal("235"),
+        inner_H_cm=Decimal("269"),
+        max_payload_kg=Decimal("26600"),
+        cost=Decimal("1.9"),
+    )
+    special_specs = [
+        ContainerSpec(
+            type="20FR",
+            category="SPECIAL",
+            inner_L_cm=Decimal("589"),
+            inner_W_cm=Decimal("240"),
+            inner_H_cm=Decimal("260"),
+            deck_L_cm=Decimal("589"),
+            deck_W_cm=Decimal("240"),
+            max_payload_kg=Decimal("30000"),
+        ),
+        ContainerSpec(
+            type="40FR",
+            category="SPECIAL",
+            inner_L_cm=Decimal("1160"),
+            inner_W_cm=Decimal("240"),
+            inner_H_cm=Decimal("260"),
+            deck_L_cm=Decimal("1160"),
+            deck_W_cm=Decimal("240"),
+            max_payload_kg=Decimal("34000"),
+        ),
+    ]
+
+    result = estimate(
+        pieces,
+        [spec_40hc],
+        spec_40hc,
+        Decimal("20"),
+        "MIN_CONTAINERS",
+        "SINGLE_TYPE",
+        special_specs=special_specs,
+    )
+
+    placed_types = {pl.container_type for pl in result.placements}
+    assert "20FR" in placed_types
+
+
+def test_special_container_count_is_based_on_oog_then_fill_in_gauge():
+    df = pd.DataFrame(
+        [
+            {"id": "A", "desc": "ow", "qty": 1, "L_cm": 240, "W_cm": 236, "H_cm": 236, "weight_kg": 3000},
+            {"id": "B", "desc": "normal", "qty": 2, "L_cm": 150, "W_cm": 150, "H_cm": 100, "weight_kg": 500},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    spec_40hc = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("1203"),
+        inner_W_cm=Decimal("235"),
+        inner_H_cm=Decimal("269"),
+        max_payload_kg=Decimal("26600"),
+        cost=Decimal("1.9"),
+    )
+    special_specs = [
+        ContainerSpec(
+            type="20FR",
+            category="SPECIAL",
+            inner_L_cm=Decimal("589"),
+            inner_W_cm=Decimal("240"),
+            inner_H_cm=Decimal("260"),
+            deck_L_cm=Decimal("589"),
+            deck_W_cm=Decimal("240"),
+            max_payload_kg=Decimal("30000"),
+        ),
+        ContainerSpec(
+            type="40FR",
+            category="SPECIAL",
+            inner_L_cm=Decimal("1160"),
+            inner_W_cm=Decimal("240"),
+            inner_H_cm=Decimal("260"),
+            deck_L_cm=Decimal("1160"),
+            deck_W_cm=Decimal("240"),
+            max_payload_kg=Decimal("34000"),
+        ),
+    ]
+
+    result = estimate(
+        pieces,
+        [spec_40hc],
+        spec_40hc,
+        Decimal("20"),
+        "MIN_CONTAINERS",
+        "SINGLE_TYPE",
+        special_specs=special_specs,
+    )
+
+    fr_placements = [pl for pl in result.placements if pl.container_type == "20FR"]
+    assert len(fr_placements) >= 2

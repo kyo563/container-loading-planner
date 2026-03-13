@@ -68,13 +68,35 @@ containers:
     door_H_cm: 258
     max_payload_kg: 26600
     cost: 1.9
-  - type: OT
+  - type: 20OT
     category: SPECIAL
-    deck_L_cm: 1200
+    inner_L_cm: 589
+    inner_W_cm: 235
+    inner_H_cm: 400
+    deck_L_cm: 589
+    deck_W_cm: 235
+    max_payload_kg: 28200
+  - type: 40OT
+    category: SPECIAL
+    inner_L_cm: 1203
+    inner_W_cm: 235
+    inner_H_cm: 400
+    deck_L_cm: 1203
     deck_W_cm: 235
     max_payload_kg: 28000
-  - type: FR
+  - type: 20FR
     category: SPECIAL
+    inner_L_cm: 589
+    inner_W_cm: 240
+    inner_H_cm: 260
+    deck_L_cm: 589
+    deck_W_cm: 240
+    max_payload_kg: 30000
+  - type: 40FR
+    category: SPECIAL
+    inner_L_cm: 1160
+    inner_W_cm: 240
+    inner_H_cm: 260
     deck_L_cm: 1160
     deck_W_cm: 240
     max_payload_kg: 34000

@@ -178,6 +178,61 @@ def _pick_standard_spec(standard_specs: list[ContainerSpec], preferred: str) -> 
     return standard_specs[0] if standard_specs else None
 
 
+def _pick_special_spec_by_ft(special_specs: dict[str, ContainerSpec], base_type: str, prefer_40ft: bool) -> ContainerSpec | None:
+    candidates = [spec for spec in special_specs.values() if spec.type.endswith(base_type)]
+    if not candidates:
+        return None
+
+    if prefer_40ft:
+        for spec in candidates:
+            if spec.type.startswith("40"):
+                return spec
+    for spec in candidates:
+        if spec.type.startswith("20"):
+            return spec
+    return candidates[0]
+
+
+def _can_fit_piece_on_special_spec(piece: Piece, spec: ContainerSpec) -> bool:
+    if spec.max_payload_kg is not None and piece.weight_kg > spec.max_payload_kg:
+        return False
+
+    if spec.inner_L_cm is not None and spec.inner_W_cm is not None:
+        fits_floor = (piece.L_cm <= spec.inner_L_cm and piece.W_cm <= spec.inner_W_cm) or (
+            piece.W_cm <= spec.inner_L_cm and piece.L_cm <= spec.inner_W_cm
+        )
+        if not fits_floor:
+            return False
+        if spec.inner_H_cm is not None and piece.H_cm > spec.inner_H_cm:
+            return False
+        return True
+
+    if spec.deck_L_cm is not None and spec.deck_W_cm is not None:
+        return (piece.L_cm <= spec.deck_L_cm and piece.W_cm <= spec.deck_W_cm) or (
+            piece.W_cm <= spec.deck_L_cm and piece.L_cm <= spec.deck_W_cm
+        )
+
+    return False
+
+
+def _select_special_container_type(piece: Piece, base_type: str, special_specs: dict[str, ContainerSpec]) -> str:
+    if base_type not in {"FR", "OT"}:
+        return base_type
+
+    spec_20 = special_specs.get(f"20{base_type}")
+    spec_40 = special_specs.get(f"40{base_type}")
+    if spec_20 is None and spec_40 is None:
+        return base_type
+    if spec_20 is None:
+        return spec_40.type
+    if spec_40 is None:
+        return spec_20.type
+
+    if _can_fit_piece_on_special_spec(piece, spec_20):
+        return spec_20.type
+    return spec_40.type
+
+
 def _pack_special_and_fill(
     pieces_by_type: dict[str, list[Piece]],
     special_specs: dict[str, ContainerSpec],
@@ -191,15 +246,27 @@ def _pack_special_and_fill(
         if not special_pieces:
             continue
         spec = special_specs.get(container_type)
-        if spec is None:
+        if spec is None or not _special_spec_has_inner_dims(spec):
             continue
-        if not _special_spec_has_inner_dims(spec):
-            continue
-        pack_target = sort_pieces(special_pieces) + sort_pieces_for_special_fill(remaining_in_gauge)
-        packed = pack_pieces(spec, pack_target, constraints=constraints)
-        special_loads.extend(packed.loads)
-        placed_ids = {pl.piece.piece_id for load in packed.loads for pl in load.placements}
-        remaining_in_gauge = [piece for piece in remaining_in_gauge if piece.piece_id not in placed_ids]
+
+        packed_special = pack_pieces(spec, sort_pieces(special_pieces), constraints=constraints)
+        special_loads.extend(packed_special.loads)
+
+        for load in packed_special.loads:
+            fixed_special = [pl.piece for pl in load.placements if pl.piece.piece_id in {p.piece_id for p in special_pieces}]
+            if not fixed_special or not remaining_in_gauge:
+                continue
+            refill = pack_pieces(
+                spec,
+                sort_pieces(fixed_special) + sort_pieces_for_special_fill(remaining_in_gauge),
+                max_containers=1,
+                constraints=constraints,
+            )
+            if not refill.loads:
+                continue
+            load.placements = refill.loads[0].placements
+            placed_ids = {pl.piece.piece_id for pl in load.placements}
+            remaining_in_gauge = [piece for piece in remaining_in_gauge if piece.piece_id not in placed_ids]
 
     return special_loads, remaining_in_gauge
 
@@ -252,9 +319,9 @@ def estimate(
     in_gauge: list[Piece] = []
     special_reason_by_piece: dict[str, str] = {}
     special_piece_ids: set[str] = set()
-    pieces_by_special_type: dict[str, list[Piece]] = {"FR": [], "OT": [], "RF": []}
+    pieces_by_special_type: dict[str, list[Piece]] = {"RF": []}
     special_spec_map = {spec.type: spec for spec in (special_specs or [])}
-    fr_spec = special_spec_map.get("FR")
+    fr_spec = _pick_special_spec_by_ft(special_spec_map, "FR", prefer_40ft=True)
     breakbulk_excluded: list[Piece] = []
 
     for piece in pieces:
@@ -266,6 +333,7 @@ def estimate(
         if oog.oog_flag:
             oog_results.append((piece, oog))
             special_type, reason = recommend_special_container(piece, oog)
+            special_type = _select_special_container_type(piece, special_type, special_spec_map)
             if special_type:
                 pieces_by_special_type.setdefault(special_type, []).append(piece)
                 special_piece_ids.add(piece.piece_id)
