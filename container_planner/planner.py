@@ -23,8 +23,9 @@ def sort_pieces(pieces: Iterable[Piece]) -> list[Piece]:
     return sorted(
         pieces,
         key=lambda p: (
-            max(p.L_cm, p.W_cm, p.H_cm),
-            p.L_cm * p.W_cm,
+            p.L_cm,
+            p.W_cm,
+            p.H_cm,
             p.weight_kg,
         ),
         reverse=True,
@@ -34,9 +35,45 @@ def sort_pieces(pieces: Iterable[Piece]) -> list[Piece]:
 def sort_pieces_for_special_fill(pieces: Iterable[Piece]) -> list[Piece]:
     return sorted(
         pieces,
-        key=lambda p: (p.weight_kg, p.m3),
-        reverse=True,
+        key=lambda p: (
+            p.L_cm,
+            p.W_cm,
+            p.H_cm,
+            p.weight_kg,
+        ),
     )
+
+
+def _is_ow_piece(oog_result) -> bool:
+    return oog_result.over_W_cm > 0 or oog_result.over_L_cm > 0
+
+
+def _is_oh_only_piece(oog_result) -> bool:
+    return oog_result.over_H_cm > 0 and not _is_ow_piece(oog_result)
+
+
+def _select_oh_special_type(
+    piece: Piece,
+    special_spec_map: dict[str, ContainerSpec],
+    prefer_ot: bool,
+) -> str:
+    ot_type = _select_special_container_type(piece, "OT", special_spec_map)
+    fr_type = _select_special_container_type(piece, "FR", special_spec_map)
+    ot_spec = special_spec_map.get(ot_type)
+    fr_spec = special_spec_map.get(fr_type)
+
+    if prefer_ot:
+        if ot_spec is not None and _can_fit_piece_on_special_spec(piece, ot_spec):
+            return ot_type
+        if fr_spec is not None and _can_fit_piece_on_special_spec(piece, fr_spec):
+            return fr_type
+    else:
+        if fr_spec is not None and _can_fit_piece_on_special_spec(piece, fr_spec):
+            return fr_type
+        if ot_spec is not None and _can_fit_piece_on_special_spec(piece, ot_spec):
+            return ot_type
+
+    return ot_type if prefer_ot else fr_type
 
 
 def compute_bias_metrics(load: ContainerLoad, threshold_pct: Decimal) -> BiasMetrics:
@@ -339,16 +376,34 @@ def estimate(
     fr_spec = _pick_special_spec_by_ft(special_spec_map, "FR", prefer_40ft=True)
     breakbulk_excluded: list[Piece] = []
 
+    oog_by_piece: list[tuple[Piece, object]] = []
     for piece in pieces:
         if _is_breakbulk_required(piece, fr_spec):
             breakbulk_excluded.append(piece)
             special_reason_by_piece[piece.piece_id] = "在来船推奨（40FR想定でも積載不可）"
             continue
         oog = evaluate_oog(piece, ref_spec)
+        oog_by_piece.append((piece, oog))
+
+    has_non_oh_oog = any(oog.oog_flag and not _is_oh_only_piece(oog) for _, oog in oog_by_piece)
+    prefer_ot_for_oh = not has_non_oh_oog
+
+    for piece, oog in oog_by_piece:
         if oog.oog_flag:
             oog_results.append((piece, oog))
-            special_type, reason = recommend_special_container(piece, oog)
-            special_type = _select_special_container_type(piece, special_type, special_spec_map)
+            if _is_ow_piece(oog):
+                special_type = _select_special_container_type(piece, "FR", special_spec_map)
+                reason = "長さ/幅超過（OW）"
+            elif _is_oh_only_piece(oog):
+                special_type = _select_oh_special_type(piece, special_spec_map, prefer_ot=prefer_ot_for_oh)
+                reason = "高さ超過（OH）"
+                if special_type.endswith("FR"):
+                    reason = "高さ超過（OH）: FR選定"
+                elif prefer_ot_for_oh:
+                    reason = "高さ超過（OH）: OH貨物のみのためOT優先"
+            else:
+                special_type, reason = recommend_special_container(piece, oog)
+                special_type = _select_special_container_type(piece, special_type, special_spec_map)
             if special_type:
                 pieces_by_special_type.setdefault(special_type, []).append(piece)
                 special_piece_ids.add(piece.piece_id)
