@@ -187,6 +187,86 @@ def test_fixed_priority_uses_20gp_for_residual_after_40hc():
     assert "20GP採用: 特殊コンテナおよび40HC積載後の残貨物処理" in result.decision_reasons
 
 
+def test_fixed_priority_prefers_40ft_special_for_oog_assignment():
+    df = pd.DataFrame(
+        [
+            {"id": "O", "desc": "oog", "qty": 1, "L_cm": 300, "W_cm": 110, "H_cm": 100, "weight_kg": 100},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    spec_40hc = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("220"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("120"),
+        max_payload_kg=Decimal("20000"),
+    )
+    spec_20fr = ContainerSpec(
+        type="20FR",
+        category="SPECIAL",
+        inner_L_cm=Decimal("400"),
+        inner_W_cm=Decimal("200"),
+        inner_H_cm=Decimal("200"),
+        deck_L_cm=Decimal("400"),
+        deck_W_cm=Decimal("200"),
+        max_payload_kg=Decimal("30000"),
+    )
+    spec_40fr = ContainerSpec(
+        type="40FR",
+        category="SPECIAL",
+        inner_L_cm=Decimal("800"),
+        inner_W_cm=Decimal("220"),
+        inner_H_cm=Decimal("220"),
+        deck_L_cm=Decimal("800"),
+        deck_W_cm=Decimal("220"),
+        max_payload_kg=Decimal("34000"),
+    )
+
+    result = estimate(
+        pieces,
+        [spec_40hc],
+        spec_40hc,
+        Decimal("20"),
+        "FIXED_PRIORITY",
+        "SINGLE_TYPE",
+        special_specs=[spec_20fr, spec_40fr],
+    )
+    assert result.summary_by_type.get("40FR") == 1
+
+
+def test_fixed_priority_uses_20gp_for_in_gauge_residual_when_no_oog():
+    df = pd.DataFrame(
+        [
+            {"id": "A", "desc": "base", "qty": 1, "L_cm": 220, "W_cm": 110, "H_cm": 90, "weight_kg": 100},
+            {"id": "B", "desc": "small", "qty": 1, "L_cm": 50, "W_cm": 50, "H_cm": 40, "weight_kg": 10},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    spec_40hc = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("220"),
+        inner_W_cm=Decimal("100"),
+        inner_H_cm=Decimal("120"),
+        max_payload_kg=Decimal("20000"),
+    )
+    spec_20 = _base_spec("20GP", "100")
+
+    result = estimate(
+        pieces,
+        [spec_40hc, spec_20],
+        spec_40hc,
+        Decimal("20"),
+        "FIXED_PRIORITY",
+        "SINGLE_TYPE",
+        special_specs=[],
+    )
+
+    assert result.summary_by_type == {"40HC": 1, "20GP": 1}
+    assert len(result.unplaced) == 0
+
+
 def test_recommend_special_container_h_only_heavy_is_fr():
     piece = expand_pieces(normalize_cargo_rows(pd.DataFrame([
         {"id": "A", "desc": "heavy machine", "qty": 1, "L_cm": 1100, "W_cm": 220, "H_cm": 280, "weight_kg": 25000}
@@ -388,7 +468,7 @@ def test_weight_audit_detects_concentration_warning():
     assert "重量貨物集中度高" in audit.weight_alert_message
 
 
-def test_estimate_uses_20fr_for_smaller_oog_piece():
+def test_estimate_prefers_40fr_for_smaller_oog_piece():
     df = pd.DataFrame(
         [
             {"id": "A", "desc": "small-ow", "qty": 1, "L_cm": 240, "W_cm": 236, "H_cm": 236, "weight_kg": 3000},
@@ -438,7 +518,7 @@ def test_estimate_uses_20fr_for_smaller_oog_piece():
     )
 
     placed_types = {pl.container_type for pl in result.placements}
-    assert "20FR" in placed_types
+    assert "40FR" in placed_types
 
 
 def test_special_container_count_is_based_on_oog_only():
@@ -491,7 +571,7 @@ def test_special_container_count_is_based_on_oog_only():
         special_specs=special_specs,
     )
 
-    fr_placements = [pl for pl in result.placements if pl.container_type == "20FR"]
+    fr_placements = [pl for pl in result.placements if pl.container_type == "40FR"]
     assert len(fr_placements) == 1
 
 
