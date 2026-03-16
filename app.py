@@ -6,7 +6,6 @@ import io
 
 import pandas as pd
 from pandas.errors import EmptyDataError
-import pydeck as pdk
 import streamlit as st
 import yaml
 
@@ -420,36 +419,9 @@ def _render_result_block(result, order_map, package_lookup, title_prefix: str):
         st.success("積載不可貨物はありません")
 
     if not df.empty:
-        chart_col1, chart_col2 = st.columns(2)
-        with chart_col1:
-            st.markdown("**2D配置ビュー（上面）**")
-            view_df = df[["container_label", "placed_x_cm", "placed_y_cm"]].copy()
-            st.scatter_chart(view_df, x="placed_x_cm", y="placed_y_cm", color="container_label")
-
-        with chart_col2:
-            st.markdown("**3D配置ビュー**")
-            chart_data = df[["placed_x_cm", "placed_y_cm", "placed_z_cm"]].copy()
-            chart_data = chart_data.apply(pd.to_numeric)
-            st.pydeck_chart(
-                pdk.Deck(
-                    map_style=None,
-                    initial_view_state=pdk.ViewState(latitude=0, longitude=0, zoom=0, pitch=45),
-                    layers=[
-                        pdk.Layer(
-                            "ColumnLayer",
-                            data=chart_data,
-                            get_position="[placed_x_cm, placed_y_cm]",
-                            get_elevation="placed_z_cm",
-                            elevation_scale=2,
-                            radius=30,
-                            get_fill_color="[0, 120, 255, 180]",
-                            pickable=True,
-                            auto_highlight=True,
-                        )
-                    ],
-                ),
-                use_container_width=True,
-            )
+        st.markdown("**2D配置ビュー（上面）**")
+        view_df = df[["container_label", "placed_x_cm", "placed_y_cm"]].copy()
+        st.scatter_chart(view_df, x="placed_x_cm", y="placed_y_cm", color="container_label")
 
     gross_map = estimate_gross_weight_by_container(result.placements, special_counts)
     oog_totals = summarize_oog_overages(result.oog_results)
