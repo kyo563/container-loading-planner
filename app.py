@@ -861,11 +861,11 @@ with main_tab:
 
         if ordered_candidate_types:
             st.caption(
-                "見積り候補は STANDARD コンテナ全種です。優先順はサイドバーの「コンテナ表示順」を使用し、"
-                "未指定タイプは containers.yaml の定義順で続けて評価します。"
+                "見積り候補は STANDARD コンテナ全種です。サイドバーの「コンテナ表示順」を反映した候補順で"
+                "多種混合の自動評価を行い、未指定タイプは containers.yaml の定義順で続けます。"
             )
         else:
-            st.caption("見積り候補は STANDARD コンテナ全種です。containers.yaml の定義順で評価します。")
+            st.caption("見積り候補は STANDARD コンテナ全種です。containers.yaml の定義順で多種混合の自動評価を行います。")
         if not execute_clicked:
             st.caption("準備ができたら「見積もり実行」を押してください。")
 
@@ -878,8 +878,8 @@ with main_tab:
                     candidates,
                     ref_spec,
                     Decimal(str(bias_threshold)),
-                    "FIXED_PRIORITY",
-                    "SINGLE_TYPE",
+                    "MIN_CONTAINERS",
+                    "MULTI_TYPE",
                     constraints,
                     special_specs,
                     int(small_lot_threshold_pieces),
