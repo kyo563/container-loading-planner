@@ -50,7 +50,7 @@ containers:
     door_W_cm: 234
     door_H_cm: 228
     max_payload_kg: 28200
-    cost: 1.0
+    cost: 7.0
   - type: 40GP
     category: STANDARD
     inner_L_cm: 1203
@@ -59,7 +59,7 @@ containers:
     door_W_cm: 234
     door_H_cm: 228
     max_payload_kg: 26700
-    cost: 1.7
+    cost: 6.0
   - type: 40HC
     category: STANDARD
     inner_L_cm: 1203
@@ -68,7 +68,7 @@ containers:
     door_W_cm: 234
     door_H_cm: 258
     max_payload_kg: 26600
-    cost: 1.9
+    cost: 6.0
   - type: 20OT
     category: SPECIAL
     inner_L_cm: 589
@@ -77,6 +77,7 @@ containers:
     deck_L_cm: 589
     deck_W_cm: 235
     max_payload_kg: 28200
+    cost: 4.0
   - type: 40OT
     category: SPECIAL
     inner_L_cm: 1203
@@ -85,6 +86,7 @@ containers:
     deck_L_cm: 1203
     deck_W_cm: 235
     max_payload_kg: 28000
+    cost: 3.0
   - type: 20FR
     category: SPECIAL
     inner_L_cm: 589
@@ -93,6 +95,7 @@ containers:
     deck_L_cm: 589
     deck_W_cm: 240
     max_payload_kg: 30000
+    cost: 2.0
   - type: 40FR
     category: SPECIAL
     inner_L_cm: 1160
@@ -101,6 +104,7 @@ containers:
     deck_L_cm: 1160
     deck_W_cm: 240
     max_payload_kg: 34000
+    cost: 1.0
   - type: RF
     category: SPECIAL
     inner_L_cm: 1150
@@ -303,10 +307,6 @@ def _format_cargo_input_error(exc: Exception) -> str:
 
 
 def _format_container_type_label(container_type: str) -> str:
-    if container_type == "OT":
-        return "40OT"
-    if container_type == "FR":
-        return "40FR"
     return container_type
 
 
@@ -894,7 +894,6 @@ with main_tab:
                 summary_df = pd.DataFrame(summary_counts.items(), columns=["type", "count"])
                 summary_df["type"] = summary_df["type"].map(_format_container_type_label)
                 st.dataframe(summary_df, use_container_width=True)
-                st.caption("※ 特殊コンテナは見積り上、40OT/40FRとして表示しています。")
 
                 breakbulk_summary = getattr(result, "breakbulk_summary", {})
                 breakbulk_count = int(breakbulk_summary.get("count", 0))
