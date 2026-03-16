@@ -56,9 +56,23 @@ def _select_oh_special_type(
     piece: Piece,
     special_spec_map: dict[str, ContainerSpec],
     prefer_ot: bool,
+    pieces_by_special_type: dict[str, list[Piece]],
+    constraints: PackingConstraints | None = None,
 ) -> str:
-    ot_type = _select_special_container_type(piece, "OT", special_spec_map)
-    fr_type = _select_special_container_type(piece, "FR", special_spec_map)
+    ot_type = _select_special_container_type(
+        piece,
+        "OT",
+        special_spec_map,
+        current_pieces=_current_special_pieces_for_base(pieces_by_special_type, "OT"),
+        constraints=constraints,
+    )
+    fr_type = _select_special_container_type(
+        piece,
+        "FR",
+        special_spec_map,
+        current_pieces=_current_special_pieces_for_base(pieces_by_special_type, "FR"),
+        constraints=constraints,
+    )
     ot_spec = special_spec_map.get(ot_type)
     fr_spec = special_spec_map.get(fr_type)
 
@@ -251,23 +265,64 @@ def _can_fit_piece_on_special_spec(piece: Piece, spec: ContainerSpec) -> bool:
 
     return False
 
+def _current_special_pieces_for_base(pieces_by_special_type: dict[str, list[Piece]], base_type: str) -> list[Piece]:
+    selected: list[Piece] = []
+    for container_type, pieces in pieces_by_special_type.items():
+        if container_type.endswith(base_type):
+            selected.extend(pieces)
+    return selected
 
-def _select_special_container_type(piece: Piece, base_type: str, special_specs: dict[str, ContainerSpec]) -> str:
+
+def _evaluate_special_choice(
+    spec: ContainerSpec,
+    pieces: list[Piece],
+    constraints: PackingConstraints | None,
+) -> tuple[int, Decimal] | None:
+    packed = pack_pieces(spec, sort_pieces(pieces), constraints=constraints)
+    if packed.unplaced:
+        return None
+    count = len(packed.loads)
+    total_cost = (spec.cost or Decimal("0")) * Decimal(count)
+    return count, total_cost
+
+
+
+def _select_special_container_type(
+    piece: Piece,
+    base_type: str,
+    special_specs: dict[str, ContainerSpec],
+    current_pieces: list[Piece] | None = None,
+    constraints: PackingConstraints | None = None,
+) -> str:
     if base_type not in {"FR", "OT"}:
         return base_type
 
-    spec_20 = special_specs.get(f"20{base_type}")
-    spec_40 = special_specs.get(f"40{base_type}")
-    if spec_20 is None and spec_40 is None:
+    candidates = [
+        spec
+        for spec in (special_specs.get(f"20{base_type}"), special_specs.get(f"40{base_type}"))
+        if spec is not None and _can_fit_piece_on_special_spec(piece, spec)
+    ]
+    if not candidates:
         return base_type
-    if spec_20 is None:
-        return spec_40.type
-    if spec_40 is None:
-        return spec_20.type
+    if len(candidates) == 1:
+        return candidates[0].type
 
-    if _can_fit_piece_on_special_spec(piece, spec_40):
-        return spec_40.type
-    return spec_20.type
+    existing = current_pieces or []
+    compare_pieces = [*existing, piece]
+    compared: list[tuple[int, Decimal, str]] = []
+    for spec in candidates:
+        evaluated = _evaluate_special_choice(spec, compare_pieces, constraints)
+        if evaluated is None:
+            continue
+        container_count, total_cost = evaluated
+        compared.append((container_count, total_cost, spec.type))
+
+    if compared:
+        compared.sort(key=lambda x: (x[0], x[1], x[2]))
+        return compared[0][2]
+
+    fallback = sorted(candidates, key=lambda spec: (spec.cost or Decimal("0"), spec.type))
+    return fallback[0].type
 
 
 def _sort_special_loads_for_fill(special_loads: list[ContainerLoad]) -> list[ContainerLoad]:
@@ -415,10 +470,22 @@ def estimate(
         if oog.oog_flag:
             oog_results.append((piece, oog))
             if _is_ow_piece(oog):
-                special_type = _select_special_container_type(piece, "FR", special_spec_map)
+                special_type = _select_special_container_type(
+                    piece,
+                    "FR",
+                    special_spec_map,
+                    current_pieces=_current_special_pieces_for_base(pieces_by_special_type, "FR"),
+                    constraints=constraints,
+                )
                 reason = "長さ/幅超過（OW）"
             elif _is_oh_only_piece(oog):
-                special_type = _select_oh_special_type(piece, special_spec_map, prefer_ot=prefer_ot_for_oh)
+                special_type = _select_oh_special_type(
+                    piece,
+                    special_spec_map,
+                    prefer_ot=prefer_ot_for_oh,
+                    pieces_by_special_type=pieces_by_special_type,
+                    constraints=constraints,
+                )
                 reason = "高さ超過（OH）"
                 if special_type.endswith("FR"):
                     reason = "高さ超過（OH）: FR選定"
@@ -426,7 +493,13 @@ def estimate(
                     reason = "高さ超過（OH）: OH貨物のみのためOT優先"
             else:
                 special_type, reason = recommend_special_container(piece, oog)
-                special_type = _select_special_container_type(piece, special_type, special_spec_map)
+                special_type = _select_special_container_type(
+                    piece,
+                    special_type,
+                    special_spec_map,
+                    current_pieces=_current_special_pieces_for_base(pieces_by_special_type, special_type),
+                    constraints=constraints,
+                )
             if special_type:
                 pieces_by_special_type.setdefault(special_type, []).append(piece)
                 special_piece_ids.add(piece.piece_id)
