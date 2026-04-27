@@ -119,6 +119,10 @@ OPTIONAL_COLUMNS = ["package_text", "rotate_allowed", "stackable", "max_stack_lo
 ALL_COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
 CARGO_STRING_COLUMNS = ["id", "desc", "package_text", "incompatible_with_ids"]
 CARGO_FLOAT_COLUMNS = ["L_cm", "W_cm", "H_cm", "weight_kg", "max_stack_load_kg"]
+SAI_M3 = Decimal("0.0278")
+CW_KG_PER_M3 = Decimal("166.6667")
+RT_M3 = Decimal("2.83")
+MT_M3 = Decimal("1.1327")
 
 
 TEMPLATE_JA_COLUMNS = [
@@ -197,6 +201,20 @@ def _parse_container_specs(containers_yaml: str):
 def _convert_dimension_to_cm(value: float, unit: str) -> Decimal:
     factor_map = {"mm": Decimal("0.1"), "cm": Decimal("1"), "m": Decimal("100")}
     return Decimal(str(value)) * factor_map.get(unit, Decimal("1"))
+
+
+def _calc_unit_conversions_from_m3(volume_m3: Decimal) -> dict[str, Decimal]:
+    return {
+        "m3": volume_m3,
+        "sai": volume_m3 / SAI_M3,
+        "cw": volume_m3 * CW_KG_PER_M3,
+        "rt": volume_m3 / RT_M3,
+        "mt": volume_m3 / MT_M3,
+    }
+
+
+def _round_1(value: Decimal) -> float:
+    return round(float(value), 1)
 
 
 def _empty_cargo_df() -> pd.DataFrame:
@@ -738,6 +756,38 @@ with main_tab:
                 ignore_index=True,
             )
             st.success("貨物データに追加しました。")
+
+    st.subheader("容積換算（才数 / CW / RT / MT）")
+    st.caption("cmディメンション または m3 を入力すると換算値を表示します。")
+    conversion_mode = st.radio("入力方法", ["cmディメンション", "m3"], horizontal=True)
+    base_m3 = Decimal("0")
+
+    if conversion_mode == "cmディメンション":
+        conv_col1, conv_col2, conv_col3 = st.columns(3)
+        with conv_col1:
+            conv_l_cm = st.number_input("長さ(cm)", min_value=0.0, value=0.0, step=1.0, key="conv_l_cm")
+        with conv_col2:
+            conv_w_cm = st.number_input("幅(cm)", min_value=0.0, value=0.0, step=1.0, key="conv_w_cm")
+        with conv_col3:
+            conv_h_cm = st.number_input("高さ(cm)", min_value=0.0, value=0.0, step=1.0, key="conv_h_cm")
+        if min(conv_l_cm, conv_w_cm, conv_h_cm) > 0:
+            base_m3 = (Decimal(str(conv_l_cm)) * Decimal(str(conv_w_cm)) * Decimal(str(conv_h_cm))) / Decimal(
+                "1000000"
+            )
+    else:
+        conv_m3 = st.number_input("体積(m3)", min_value=0.0, value=0.0, step=0.1, key="conv_m3")
+        if conv_m3 > 0:
+            base_m3 = Decimal(str(conv_m3))
+
+    if base_m3 > 0:
+        converted = _calc_unit_conversions_from_m3(base_m3)
+        metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+        metric_col1.metric("m3", f"{_round_1(converted['m3']):,.1f}")
+        metric_col2.metric("才数", f"{_round_1(converted['sai']):,.1f}")
+        metric_col3.metric("CW(kg)", f"{_round_1(converted['cw']):,.1f}")
+        metric_col4.metric("RT", f"{_round_1(converted['rt']):,.1f}")
+        metric_col5.metric("MT", f"{_round_1(converted['mt']):,.1f}")
+        st.caption("換算基準: 1才=0.0278m3 / 1m3=166.67kg(CW) / 1RT=2.83m3 / 1MT=1.1327m3")
 
     st.subheader("貨物データ編集")
     st.caption("行の追加/削除や数値の直接編集ができます。selected で対象行を選ぶと一括削除や mm→cm 変換が可能です。")
