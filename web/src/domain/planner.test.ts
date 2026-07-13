@@ -29,6 +29,7 @@ describe("estimatePlan", () => {
     expect(result.placements.length + result.unplaced.length).toBe(pieces.length);
     expect(result.placements.length).toBe(pieces.length);
     expect(result.loads.length).toBeGreaterThan(0);
+    expect(result.loads).toHaveLength(1);
   });
 
   it("インゲージの冷蔵貨物もRFへ振り分ける", () => {
@@ -81,6 +82,16 @@ describe("validatePlan", () => {
     const result = validatePlan(expandPieces(rows), DEFAULT_CONTAINERS, { "40HC": 1 }, DEFAULT_SETTINGS);
     expect(result.loads[0].placements).toHaveLength(1);
     expect(result.unplaced).toHaveLength(1);
+  });
+
+  it("混載不可指定でコンテナが分かれた理由を明示する", () => {
+    const rows = [
+      cargo({ id: "A", desc: "A", incompatible_with_ids: "B" }),
+      cargo({ id: "B", desc: "B", incompatible_with_ids: "" }),
+    ];
+    const result = estimatePlan(expandPieces(rows), DEFAULT_CONTAINERS, DEFAULT_SETTINGS);
+    expect(result.loads).toHaveLength(2);
+    expect(result.decision_reasons.join(" ")).toContain("混載不可指定（A ↔ B）");
   });
 
   it("複数コンテナの貨物重量差を制約内で小さくする", () => {

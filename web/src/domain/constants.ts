@@ -156,7 +156,7 @@ export const SAMPLE_CARGO: CargoRow[] = [
     rotate_allowed: false,
     stackable: false,
     max_stack_load_kg: null,
-    incompatible_with_ids: "A1001",
+    incompatible_with_ids: "",
   },
 ];
 
@@ -195,4 +195,3 @@ export const SAI_M3 = 0.0278;
 export const CW_KG_PER_M3 = 166.6667;
 export const RT_M3 = 2.83;
 export const MT_M3 = 1.1327;
-
