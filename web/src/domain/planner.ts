@@ -75,6 +75,15 @@ const normalizeLoadIndices = (loads: ContainerLoad[]): ContainerLoad[] => {
   });
 };
 
+const weightBalanceReason = (loads: ContainerLoad[]): string | null => {
+  const counts = new Map<string, number>();
+  for (const load of loads) counts.set(load.spec.type, (counts.get(load.spec.type) ?? 0) + 1);
+  const types = [...counts.entries()].filter(([, count]) => count > 1).map(([type]) => type);
+  return types.length
+    ? `${types.join("・")}は、寸法・混載・Payload制約を満たす範囲でコンテナ間の貨物重量差を小さくするよう再配置しました。`
+    : null;
+};
+
 const packMultiType = (pieces: Piece[], specs: ContainerSpec[]): { loads: ContainerLoad[]; unplaced: Piece[] } => {
   let remaining = [...pieces];
   const loads: ContainerLoad[] = [];
@@ -302,6 +311,8 @@ export const estimatePlan = (
   if ([...specialReasons.values()].some((reason) => reason.includes("FR候補"))) decisionReasons.push("長さ・幅超過貨物はFRへ振り分けました。船社承認と固縛条件の確認が必要です。");
   if ([...specialReasons.values()].some((reason) => reason.includes("OT候補"))) decisionReasons.push("高さ超過貨物はOTへ振り分けました。上方クリアランスの確認が必要です。");
   if (breakbulk.length) decisionReasons.push("40FRのデッキ長または最大積載重量を超える貨物をコンテナ計画から除外しました。");
+  const balanceReason = weightBalanceReason(loads);
+  if (balanceReason) decisionReasons.push(balanceReason);
   return {
     mode: "estimate",
     loads,
@@ -335,6 +346,9 @@ export const validatePlan = (
   }
   const normalized = normalizeLoadIndices(loads);
   const audits = attachAudits(normalized, settings);
+  const decisionReasons = remaining.length ? ["指定本数に収まらない貨物があります。積載不可一覧とOOG判定を確認してください。"] : [];
+  const balanceReason = weightBalanceReason(normalized);
+  if (balanceReason) decisionReasons.push(balanceReason);
   return {
     mode: "validate",
     loads: normalized,
@@ -344,11 +358,10 @@ export const validatePlan = (
     bias_by_container: audits.bias_by_container,
     weight_audit_by_container: audits.weight_audit_by_container,
     special_reason_by_piece: new Map(),
-    decision_reasons: remaining.length ? ["指定本数に収まらない貨物があります。積載不可一覧とOOG判定を確認してください。"] : [],
+    decision_reasons: decisionReasons,
     breakbulk_piece_ids: [],
     requested_counts: requestedCounts,
   };
 };
 
 export const containerKey = keyFor;
-

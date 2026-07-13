@@ -5,14 +5,17 @@ import { exportExcelReport, exportPlacementsCsv, printPlan } from "../domain/exp
 import { containerKey } from "../domain/planner";
 import { buildContainerKpis, containerLabel, summarizeCounts } from "../domain/reporting";
 import { fmt, fmtInt } from "../domain/rounding";
+import type { ShareablePlanState } from "../domain/sharedPlan";
 import type { PlanResult } from "../domain/types";
 import { ContainerLayout } from "./ContainerLayout";
+import { PlanShare } from "./PlanShare";
 
 interface PlanResultsProps {
   result: PlanResult;
+  sharePlan: ShareablePlanState;
 }
 
-export function PlanResults({ result }: PlanResultsProps) {
+export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const kpis = useMemo(() => buildContainerKpis(result), [result]);
   const counts = useMemo(() => summarizeCounts(result), [result]);
   const [selectedKey, setSelectedKey] = useState(() => result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
@@ -28,6 +31,12 @@ export function PlanResults({ result }: PlanResultsProps) {
   const totalWeight = [...result.placements.map((placement) => placement.piece), ...result.unplaced].reduce((sum, piece) => sum + piece.weight_kg, 0);
   const oogEntries = [...result.oog_results.entries()].filter(([, oog]) => oog.oog_flag || !oog.door_passable);
   const warningCount = kpis.filter((kpi) => kpi.bias_warn || kpi.weight_alert).length + result.unplaced.length;
+  const loadedTotals = useMemo(() => kpis.reduce((totals, kpi) => ({
+    pieces: totals.pieces + kpi.piece_count,
+    ft: totals.ft + kpi.total_ft,
+    m3: totals.m3 + kpi.total_m3,
+    weight: totals.weight + kpi.total_gross_kg,
+  }), { pieces: 0, ft: 0, m3: 0, weight: 0 }), [kpis]);
 
   return (
     <section className="results-section" id="plan-results">
@@ -41,6 +50,7 @@ export function PlanResults({ result }: PlanResultsProps) {
           <p>配置はヒューリスティック計算による計画案です。警告と積載不可貨物を必ず確認してください。</p>
         </div>
         <div className="result-actions no-print">
+          <PlanShare plan={sharePlan} />
           <button className="button secondary" onClick={() => void exportPlacementsCsv(result)}><Download size={16} />CSV</button>
           <button className="button secondary" onClick={() => void exportExcelReport(result)}><FileSpreadsheet size={16} />Excel帳票</button>
           <button className="button secondary" onClick={printPlan}><Printer size={16} />印刷 / PDF</button>
@@ -60,7 +70,7 @@ export function PlanResults({ result }: PlanResultsProps) {
 
       <div className="metric-grid result-metrics">
         <div className="metric-card"><span className="metric-icon blue"><Ship /></span><div><small>コンテナ</small><strong>{result.loads.length}<em>本</em></strong><p>{Object.keys(counts).length}タイプ</p></div></div>
-        <div className="metric-card"><span className="metric-icon green"><Check /></span><div><small>積載済み</small><strong>{result.placements.length}<em> / {allPieces}</em></strong><p>{allPieces ? fmt((result.placements.length / allPieces) * 100, 1) : "0.0"}%</p></div></div>
+        <div className="metric-card"><span className="metric-icon green"><Check /></span><div><small>積載済み</small><strong>{result.placements.length}<em> / {allPieces} PCS</em></strong><p>{allPieces ? fmt((result.placements.length / allPieces) * 100, 1) : "0.0"}%</p></div></div>
         <div className="metric-card"><span className="metric-icon gold"><Scale /></span><div><small>貨物合計</small><strong>{fmt(totalM3, 3)}<em>m³</em></strong><p>{fmtInt(totalWeight)} kg</p></div></div>
         <div className={`metric-card ${warningCount ? "metric-warning" : ""}`}><span className="metric-icon red"><AlertCircle /></span><div><small>要確認</small><strong>{warningCount}<em>件</em></strong><p>未配置・重量・偏荷重</p></div></div>
       </div>
@@ -130,7 +140,7 @@ export function PlanResults({ result }: PlanResultsProps) {
           const weight = result.weight_audit_by_container.get(key);
           return (
             <article key={key} className="print-layout-card">
-              <div><h3>{containerLabel(load)}</h3><p>{load.placements.length} pcs / {fmt(kpi?.total_m3 ?? 0, 2)} m³ / {fmtInt(kpi?.total_gross_kg ?? 0)} kg</p></div>
+              <div><h3>{containerLabel(load)}</h3><p>総個数: {load.placements.length} PCS　/　総重量: {fmtInt(kpi?.total_gross_kg ?? 0)} kg　/　総容積: {fmt(kpi?.total_m3 ?? 0, 3)} m³</p></div>
               <ContainerLayout load={load} />
               <p>Payload {fmt(kpi?.payload_ratio_pct ?? 0, 1)}% ・ 重心偏差 X/Y {fmt(bias?.offset_x_pct ?? 0, 1)} / {fmt(bias?.offset_y_pct ?? 0, 1)}% ・ 総重量目安 {fmtInt(weight?.gross_weight_kg ?? 0)}kg</p>
             </article>
@@ -138,11 +148,18 @@ export function PlanResults({ result }: PlanResultsProps) {
         })}
       </div>
 
+      <div className="print-only print-grand-total">
+        <strong>全コンテナ・積載済み総計</strong>
+        <span>総個数: {loadedTotals.pieces} PCS</span>
+        <span>総重量: {fmtInt(loadedTotals.weight)} kg</span>
+        <span>総容積: {fmt(loadedTotals.m3, 3)} m³</span>
+      </div>
+
       <div className="result-table-section">
         <div className="section-title-row"><div><span className="eyebrow">CONTAINER KPI</span><h3>コンテナ別集計</h3></div></div>
         <div className="table-shell"><table className="data-table result-table"><thead><tr><th>コンテナ</th><th>pcs</th><th>F/T</th><th>M³</th><th>貨物重量</th><th>Payload</th><th>容積</th><th>監査</th></tr></thead><tbody>
           {kpis.map((kpi) => <tr key={kpi.container_key}><td><strong>{kpi.container_label}</strong></td><td>{kpi.piece_count}</td><td>{fmt(kpi.total_ft, 3)}</td><td>{fmt(kpi.total_m3, 3)}</td><td>{fmtInt(kpi.total_gross_kg)} kg</td><td>{fmt(kpi.payload_ratio_pct, 1)}%</td><td>{fmt(kpi.volume_ratio_pct, 1)}%</td><td>{kpi.bias_warn || kpi.weight_alert ? <span className="status-chip red">要確認</span> : <span className="status-chip green">範囲内</span>}</td></tr>)}
-        </tbody></table></div>
+        </tbody><tfoot><tr><td><strong>積載済み総計</strong></td><td><strong>{loadedTotals.pieces}</strong></td><td><strong>{fmt(loadedTotals.ft, 3)}</strong></td><td><strong>{fmt(loadedTotals.m3, 3)}</strong></td><td><strong>{fmtInt(loadedTotals.weight)} kg</strong></td><td>—</td><td>—</td><td>—</td></tr></tfoot></table></div>
       </div>
 
       {result.unplaced.length > 0 && (
@@ -166,7 +183,7 @@ export function PlanResults({ result }: PlanResultsProps) {
           </tbody></table></div>
         </details>
       )}
-      <p className="result-disclaimer">本結果は初期検討用です。実入手可能なコンテナ仕様、床荷重、固縛、積付け作業性、道路法令、船社・ターミナル条件を別途確認してください。</p>
+      <p className="result-disclaimer">本結果は初期検討用です。床面に余裕がある間は平置きを優先しますが、残る隙間にはダンネージ・ブロッキング・ラッシング等の移動防止措置が必要です。実入手可能なコンテナ仕様、床荷重、積付け作業性、道路法令、船社・ターミナル条件を別途確認してください。</p>
     </section>
   );
 }

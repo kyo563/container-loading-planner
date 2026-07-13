@@ -82,5 +82,54 @@ describe("validatePlan", () => {
     expect(result.loads[0].placements).toHaveLength(1);
     expect(result.unplaced).toHaveLength(1);
   });
-});
 
+  it("複数コンテナの貨物重量差を制約内で小さくする", () => {
+    const rows = [8_000, 7_000, 1_000, 1_000].map((weight, index) => cargo({
+      uid: `balance-${index}`,
+      id: `W${index + 1}`,
+      L_cm: 600,
+      W_cm: 230,
+      H_cm: 100,
+      weight_kg: weight,
+      stackable: false,
+    }));
+    const result = validatePlan(expandPieces(rows), DEFAULT_CONTAINERS, { "40HC": 2 }, DEFAULT_SETTINGS);
+    const weights = result.loads.map((load) => load.placements.reduce((sum, placement) => sum + placement.piece.weight_kg, 0)).sort((a, b) => a - b);
+    expect(weights).toEqual([8_000, 9_000]);
+    expect(result.decision_reasons.join(" ")).toContain("貨物重量差");
+  });
+
+  it("同寸法貨物を左右へ分けてコンテナ内重心を中央へ寄せる", () => {
+    const rows = [0, 1].map((index) => cargo({
+      uid: `spatial-${index}`,
+      id: `S${index + 1}`,
+      L_cm: 100,
+      W_cm: 100,
+      H_cm: 100,
+      weight_kg: 1_000,
+      stackable: false,
+    }));
+    const result = validatePlan(expandPieces(rows), DEFAULT_CONTAINERS, { "40HC": 1 }, DEFAULT_SETTINGS);
+    const load = result.loads[0];
+    const yPositions = new Set(load.placements.map((placement) => placement.placed_y_cm));
+    const audit = result.bias_by_container.get(containerKey("40HC", 1));
+    expect(yPositions.size).toBe(2);
+    expect(audit?.offset_y_pct).toBeLessThan(0.1);
+    expect(audit?.offset_x_pct).toBeLessThan(0.1);
+  });
+
+  it("段積み可能でも床面に余裕がある間は平置きを優先する", () => {
+    const rows = [0, 1, 2, 3].map((index) => cargo({
+      uid: `floor-first-${index}`,
+      id: `F${index + 1}`,
+      L_cm: 100,
+      W_cm: 100,
+      H_cm: 100,
+      weight_kg: 500,
+      stackable: true,
+    }));
+    const result = validatePlan(expandPieces(rows), DEFAULT_CONTAINERS, { "40HC": 1 }, DEFAULT_SETTINGS);
+    expect(result.loads[0].placements.every((placement) => placement.placed_z_cm === 0)).toBe(true);
+    expect(new Set(result.loads[0].placements.map((placement) => placement.placed_y_cm)).size).toBe(2);
+  });
+});
