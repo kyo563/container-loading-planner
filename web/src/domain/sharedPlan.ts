@@ -1,11 +1,14 @@
 import { strFromU8, strToU8, zlibSync, unzlibSync } from "fflate";
 
 import type { CargoRow, ContainerSpec, PlanningSettings } from "./types";
+import { validateCargoRows } from "./input";
+import { assertValidContainerSpecs, assertValidPlanningSettings, assertValidRequestedCounts } from "./validation";
 
 const FORMAT = "lp1";
 const MAX_TOKEN_CHARS = 60_000;
 const MAX_ROWS = 1_000;
 const MAX_SPECS = 100;
+const MAX_DECOMPRESSED_BYTES = 2_000_000;
 
 export interface SharedPlanData {
   app: "loadpilot";
@@ -129,7 +132,7 @@ const sanitizeCounts = (value: unknown): Record<string, number> => {
 const sanitizePlan = (value: unknown): SharedPlanData => {
   if (!isRecord(value) || value.app !== "loadpilot" || value.version !== 1) throw new Error("対応していない共有プランです。");
   if (value.mode !== "estimate" && value.mode !== "validate") throw new Error("計算モードが正しくありません。");
-  return {
+  const plan: SharedPlanData = {
     app: "loadpilot",
     version: 1,
     created_at: textValue(value.created_at, "作成日時", 100),
@@ -139,10 +142,16 @@ const sanitizePlan = (value: unknown): SharedPlanData => {
     settings: sanitizeSettings(value.settings),
     specs: sanitizeSpecs(value.specs),
   };
+  const rowIssues = validateCargoRows(plan.rows);
+  if (rowIssues.length) throw new Error(`共有プランの貨物情報が不正です（${rowIssues[0].row}行目: ${rowIssues[0].message}）。`);
+  assertValidContainerSpecs(plan.specs);
+  assertValidPlanningSettings(plan.settings);
+  assertValidRequestedCounts(plan.counts, plan.specs);
+  return plan;
 };
 
 export const encodeSharedPlan = async (state: ShareablePlanState): Promise<string> => {
-  const data: SharedPlanData = { app: "loadpilot", version: 1, created_at: new Date().toISOString(), ...state };
+  const data = sanitizePlan({ app: "loadpilot", version: 1, created_at: new Date().toISOString(), ...state });
   const compressed = zlibSync(strToU8(JSON.stringify(data)), { level: 9 });
   const token = `${FORMAT}.${await checksum(compressed)}.${bytesToBase64Url(compressed)}`;
   if (token.length > MAX_TOKEN_CHARS) throw new Error("共有URLが長すぎます。貨物行またはカスタムコンテナ仕様を減らしてください。");
@@ -155,12 +164,20 @@ export const decodeSharedPlan = async (token: string): Promise<SharedPlanData> =
   if (format !== FORMAT || !expectedChecksum || !payload || rest.length) throw new Error("共有URLの形式が正しくありません。");
   const compressed = base64UrlToBytes(payload);
   if (await checksum(compressed) !== expectedChecksum) throw new Error("共有データが破損または変更されています。");
+  let decompressed: Uint8Array;
   try {
-    return sanitizePlan(JSON.parse(strFromU8(unzlibSync(compressed))) as unknown);
-  } catch (error) {
-    if (error instanceof Error && !/invalid|unexpected|JSON/iu.test(error.message)) throw error;
+    decompressed = unzlibSync(compressed);
+  } catch {
     throw new Error("共有データを展開できませんでした。");
   }
+  if (decompressed.byteLength > MAX_DECOMPRESSED_BYTES) throw new Error("共有データの展開後サイズが上限を超えています。");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(strFromU8(decompressed)) as unknown;
+  } catch {
+    throw new Error("共有データを読み取れませんでした。");
+  }
+  return sanitizePlan(parsed);
 };
 
 export const buildSharedPlanUrl = async (state: ShareablePlanState, baseUrl = window.location.href.split("#")[0]): Promise<string> =>
