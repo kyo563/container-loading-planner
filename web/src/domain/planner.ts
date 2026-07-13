@@ -1,4 +1,4 @@
-import { evaluateOog, isBreakbulkRequired, requiresReefer } from "./oog";
+import { evaluateOog, isBreakbulkRequired, isFrCargoSubstantial, requiresReefer } from "./oog";
 import { packPieces, sortPieces } from "./packing";
 import type {
   BiasMetrics,
@@ -291,6 +291,11 @@ export const estimatePlan = (
       continue;
     }
     if (isOw(oog)) {
+      if (!isFrCargoSubstantial(piece)) {
+        breakbulk.push(piece);
+        specialReasons.set(piece.piece_id, "FR最小貨物基準未満（個別輸送・専用架台等を要検討）");
+        continue;
+      }
       const existing = specialSpecs
         .filter((spec) => spec.type.endsWith("FR"))
         .flatMap((spec) => specialGroups.get(spec.type) ?? []);
@@ -331,7 +336,8 @@ export const estimatePlan = (
   if ([...specialReasons.values()].some((reason) => reason.includes("冷凍・冷蔵"))) decisionReasons.push("冷凍・冷蔵貨物はRFへ分離しました。");
   if ([...specialReasons.values()].some((reason) => reason.includes("FR候補"))) decisionReasons.push("長さ・幅超過貨物はFRへ振り分けました。船社承認と固縛条件の確認が必要です。");
   if ([...specialReasons.values()].some((reason) => reason.includes("OT候補"))) decisionReasons.push("高さ超過貨物はOTへ振り分けました。上方クリアランスの確認が必要です。");
-  if (breakbulk.length) decisionReasons.push("40FRのデッキ長または最大積載重量を超える貨物をコンテナ計画から除外しました。");
+  if ([...specialReasons.values()].some((reason) => reason.includes("40FR想定でも積載不可"))) decisionReasons.push("40FRのデッキ長または最大積載重量を超える貨物をコンテナ計画から除外しました。");
+  if ([...specialReasons.values()].some((reason) => reason.includes("FR最小貨物基準未満"))) decisionReasons.push("小型・細長いOOG貨物はFRからの振落しリスクを考慮し、自動FR積載の対象外としました。");
   const balanceReason = weightBalanceReason(loads);
   if (balanceReason) decisionReasons.push(balanceReason);
   const separatedReason = incompatibilityReason(pieces, loads);
