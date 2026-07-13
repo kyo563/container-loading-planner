@@ -1,4 +1,5 @@
 import type { ContainerLoad } from "../domain/types";
+import { buildLayoutLabels } from "../domain/layoutLabels";
 
 const colorFor = (value: string): string => {
   let hash = 0;
@@ -12,6 +13,7 @@ interface ContainerLayoutProps {
 }
 
 export function ContainerLayout({ load }: ContainerLayoutProps) {
+  const { labels, legends } = buildLayoutLabels(load);
   const minWidth = Math.min(0, ...load.placements.map((placement) => placement.placed_y_cm));
   const maxWidth = Math.max(
     load.spec.inner_W_cm,
@@ -22,6 +24,7 @@ export function ContainerLayout({ load }: ContainerLayoutProps) {
   const paddingY = drawingWidth * 0.09;
   const viewBox = `${-paddingX} ${minWidth - paddingY} ${load.spec.inner_L_cm + paddingX * 2} ${drawingWidth + paddingY * 2}`;
   return (
+    <figure className="container-layout-figure">
     <svg className="container-layout" viewBox={viewBox} role="img" aria-label={`${load.spec.type}の上面配置図`}>
       <defs>
         <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
@@ -34,8 +37,7 @@ export function ContainerLayout({ load }: ContainerLayoutProps) {
       <line x1="0" y1={load.spec.inner_W_cm / 2} x2={load.spec.inner_L_cm} y2={load.spec.inner_W_cm / 2} stroke="#17324a" strokeDasharray="12 9" strokeOpacity=".3" strokeWidth="2" />
       {load.placements.map((placement) => {
         const color = colorFor(placement.piece.orig_id);
-        const fontSize = Math.max(10, Math.min(22, placement.orient_L_cm / 5, placement.orient_W_cm / 2.8));
-        const showLabel = placement.orient_L_cm > 65 && placement.orient_W_cm > 24;
+        const label = labels.get(placement.piece.piece_id);
         return (
           <g key={placement.piece.piece_id}>
             <rect
@@ -51,18 +53,18 @@ export function ContainerLayout({ load }: ContainerLayoutProps) {
             >
               <title>{`${placement.piece.piece_id} ${placement.piece.desc}\n${placement.orient_L_cm}×${placement.orient_W_cm}×${placement.orient_H_cm}cm / ${placement.piece.weight_kg}kg\nz=${placement.placed_z_cm}cm`}</title>
             </rect>
-            {showLabel && (
+            {label && (
               <text
                 x={placement.placed_x_cm + placement.orient_L_cm / 2}
                 y={placement.placed_y_cm + placement.orient_W_cm / 2}
                 textAnchor="middle"
                 dominantBaseline="central"
-                fontSize={fontSize}
+                fontSize={label.fontSize}
                 fontWeight="700"
                 fill="#fff"
                 pointerEvents="none"
               >
-                {placement.piece.piece_id}
+                {label.text}
               </text>
             )}
           </g>
@@ -71,5 +73,11 @@ export function ContainerLayout({ load }: ContainerLayoutProps) {
       <text x="4" y={-paddingY * 0.28} fontSize="18" fontWeight="700" fill="#17324a">FRONT / DOOR</text>
       <text x={load.spec.inner_L_cm - 4} y={-paddingY * 0.28} textAnchor="end" fontSize="18" fill="#62768a">INNER {load.spec.inner_L_cm} × {load.spec.inner_W_cm} cm</text>
     </svg>
+    {legends.length > 0 && (
+      <figcaption className="layout-label-legend" aria-label="小型貨物ID凡例">
+        {legends.map((legend) => <span key={legend.origId}><b>{legend.code}</b><strong>{legend.origId}</strong>{legend.pieceRange} <small>({legend.count} PCS)</small></span>)}
+      </figcaption>
+    )}
+    </figure>
   );
 }
