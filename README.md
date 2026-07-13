@@ -1,7 +1,41 @@
-# container-loading-planner
+# container-loading-planner / LoadPilot
 
-Python + Streamlit で動く、コンテナ積載計画（Vanning Plan）作成アプリです。  
-貨物CSVとコンテナ仕様（YAML）を入力すると、**必要本数の見積り**と**本数固定での積載検証**を実行し、配置結果・OOG判定・偏荷重警告を確認できます。
+貨物データから、**必要本数の見積り**と**本数固定での積載検証**を行うコンテナ積載計画（Vanning Plan）アプリです。公開用のGitHub Pages版と、計算仕様の参照実装であるPython + Streamlit版を収録しています。
+
+## GitHub Pages版（推奨）
+
+React + TypeScriptで実装したブラウザ完結版です。貨物ファイルと計算結果はサーバーへ送信しません。
+
+- CSV / TSV / Excel読込、表の直接編集、ブランクフォーム出力
+- 必要本数の自動見積り、指定本数でのSTANDARD / SPECIAL検証
+- OOG・入口通過・RF / OT / FR・在来船検討の判定
+- 上面配置図、Payload、風袋込み総重量、偏荷重、重量集中の監査
+- CSV、Excel帳票、印刷 / PDF保存
+- PC・タブレット・スマートフォン対応
+
+ローカル起動:
+
+```bash
+cd web
+npm ci
+npm run dev
+```
+
+品質確認:
+
+```bash
+cd web
+npm test
+npm run build
+```
+
+公開は `.github/workflows/deploy-pages.yml` が `main` ブランチへの反映後に自動実行します。受入基準と設計判断は `docs/web_application.md` を参照してください。
+
+> GitHub Pages版ではAPIキーを安全に保持できないため、AIダブルチェックは提供しません。AI機能が必要な場合は、認証付きサーバーAPIとして分離してください。
+
+## Streamlit版（参照実装）
+
+Python + Streamlitで動く従来版です。貨物CSVとコンテナ仕様（YAML）を入力すると、配置結果・OOG判定・偏荷重警告を確認できます。
 
 ---
 
