@@ -237,7 +237,7 @@ export const sortPieces = (pieces: Piece[]): Piece[] =>
       b.L_cm - a.L_cm || b.W_cm - a.W_cm || b.H_cm - a.H_cm || b.weight_kg - a.weight_kg,
   );
 
-export const packPieces = (spec: ContainerSpec, pieces: Piece[], maxContainers?: number): PackResult => {
+const packSequentially = (spec: ContainerSpec, pieces: Piece[], maxContainers?: number): PackResult => {
   if (maxContainers != null && maxContainers <= 0) return { loads: [], unplaced: [...pieces] };
   const packer = new ShelfPacker(spec, maxContainers);
   const unplaced: Piece[] = [];
@@ -245,4 +245,169 @@ export const packPieces = (spec: ContainerSpec, pieces: Piece[], maxContainers?:
     if (!packer.place(piece)) unplaced.push(piece);
   }
   return { loads: packer.result(), unplaced };
+};
+
+const cargoWeight = (load: ContainerLoad): number => load.placements.reduce((sum, placement) => sum + placement.piece.weight_kg, 0);
+
+const repackSingleLoad = (spec: ContainerSpec, pieces: Piece[], index: number): ContainerLoad | null => {
+  if (!pieces.length) return null;
+  const packed = packSequentially(spec, sortPieces(pieces), 1);
+  const load = packed.loads[0];
+  if (!load || packed.unplaced.length) return null;
+  return {
+    ...load,
+    index,
+    placements: load.placements.map((placement) => ({ ...placement, container_index: index })),
+  };
+};
+
+const rebalanceLoadsByWeight = (spec: ContainerSpec, initialLoads: ContainerLoad[]): ContainerLoad[] => {
+  if (initialLoads.length < 2) return initialLoads;
+  const loads = initialLoads.map((load) => ({ ...load, placements: [...load.placements] }));
+  const totalPieces = loads.reduce((sum, load) => sum + load.placements.length, 0);
+  const maxMoves = Math.max(totalPieces * 2, 1);
+
+  for (let move = 0; move < maxMoves; move += 1) {
+    const ordered = loads
+      .map((load, index) => ({ load, index, weight: cargoWeight(load) }))
+      .sort((a, b) => b.weight - a.weight || a.index - b.index);
+    let moved = false;
+
+    for (const source of ordered) {
+      if (source.load.placements.length <= 1) continue;
+      const targets = ordered.filter((entry) => entry.index !== source.index && entry.weight < source.weight).sort((a, b) => a.weight - b.weight);
+      for (const target of targets) {
+        const difference = source.weight - target.weight;
+        const candidates = source.load.placements
+          .map((placement) => placement.piece)
+          .filter((piece) => Math.abs(difference - 2 * piece.weight_kg) < difference)
+          .sort(
+            (a, b) =>
+              Math.abs(difference - 2 * a.weight_kg) - Math.abs(difference - 2 * b.weight_kg) ||
+              b.weight_kg - a.weight_kg,
+          );
+        for (const candidate of candidates) {
+          const sourcePieces = source.load.placements.map((placement) => placement.piece).filter((piece) => piece.piece_id !== candidate.piece_id);
+          const targetPieces = [...target.load.placements.map((placement) => placement.piece), candidate];
+          const nextSource = repackSingleLoad(spec, sourcePieces, source.load.index);
+          const nextTarget = repackSingleLoad(spec, targetPieces, target.load.index);
+          if (!nextSource || !nextTarget) continue;
+          loads[source.index] = nextSource;
+          loads[target.index] = nextTarget;
+          moved = true;
+          break;
+        }
+        if (!moved) {
+          const sourceCandidates = source.load.placements
+            .map((placement) => placement.piece)
+            .sort((a, b) => b.weight_kg - a.weight_kg)
+            .slice(0, 64);
+          const targetCandidates = target.load.placements
+            .map((placement) => placement.piece)
+            .sort((a, b) => a.weight_kg - b.weight_kg)
+            .slice(0, 64);
+          const swaps = sourceCandidates
+            .flatMap((fromSource) => targetCandidates.map((fromTarget) => ({
+              fromSource,
+              fromTarget,
+              nextDifference: Math.abs(difference - 2 * (fromSource.weight_kg - fromTarget.weight_kg)),
+            })))
+            .filter((swap) => swap.fromSource.weight_kg > swap.fromTarget.weight_kg && swap.nextDifference < difference)
+            .sort((a, b) => a.nextDifference - b.nextDifference)
+            .slice(0, 64);
+          for (const swap of swaps) {
+            const sourcePieces = source.load.placements
+              .map((placement) => placement.piece)
+              .filter((piece) => piece.piece_id !== swap.fromSource.piece_id)
+              .concat(swap.fromTarget);
+            const targetPieces = target.load.placements
+              .map((placement) => placement.piece)
+              .filter((piece) => piece.piece_id !== swap.fromTarget.piece_id)
+              .concat(swap.fromSource);
+            const nextSource = repackSingleLoad(spec, sourcePieces, source.load.index);
+            const nextTarget = repackSingleLoad(spec, targetPieces, target.load.index);
+            if (!nextSource || !nextTarget) continue;
+            loads[source.index] = nextSource;
+            loads[target.index] = nextTarget;
+            moved = true;
+            break;
+          }
+        }
+        if (moved) break;
+      }
+      if (moved) break;
+    }
+    if (!moved) break;
+  }
+  return loads;
+};
+
+const centerExistingRows = (load: ContainerLoad): ContainerLoad => {
+  const rows = new Map<number, Placement[]>();
+  for (const placement of load.placements) {
+    rows.set(placement.placed_y_cm, [...(rows.get(placement.placed_y_cm) ?? []), placement]);
+  }
+  const centeredRows = [...rows.values()].map((row) => {
+    const minX = Math.min(...row.map((placement) => placement.placed_x_cm));
+    const maxX = Math.max(...row.map((placement) => placement.placed_x_cm + placement.orient_L_cm));
+    const shiftX = (load.spec.inner_L_cm - (maxX - minX)) / 2 - minX;
+    return row.map((placement) => ({ ...placement, placed_x_cm: placement.placed_x_cm + shiftX }));
+  });
+  const flattened = centeredRows.flat();
+  const minY = Math.min(...flattened.map((placement) => placement.placed_y_cm));
+  const maxY = Math.max(...flattened.map((placement) => placement.placed_y_cm + placement.orient_W_cm));
+  const shiftY = (load.spec.inner_W_cm - (maxY - minY)) / 2 - minY;
+  return { ...load, placements: flattened.map((placement) => ({ ...placement, placed_y_cm: placement.placed_y_cm + shiftY })) };
+};
+
+const balanceUniformLoad = (load: ContainerLoad): ContainerLoad | null => {
+  if (load.placements.length < 2 || load.placements.some((placement) => placement.placed_z_cm !== 0)) return null;
+  const first = load.placements[0];
+  const uniform = load.placements.every(
+    (placement) =>
+      placement.orient_L_cm === first.orient_L_cm &&
+      placement.orient_W_cm === first.orient_W_cm &&
+      placement.orient_H_cm === first.orient_H_cm,
+  );
+  if (!uniform) return null;
+  const rowCount = 2;
+  const maxColumns = Math.floor(load.spec.inner_L_cm / first.orient_L_cm);
+  const widthRemainder = load.spec.inner_W_cm - rowCount * first.orient_W_cm;
+  if (maxColumns < 1 || load.placements.length > rowCount * maxColumns || widthRemainder < rowCount * WIDTH_CLEARANCE_CM) return null;
+
+  const rows: Placement[][] = [[], []];
+  const rowWeights = [0, 0];
+  const weighted = [...load.placements].sort((a, b) => b.piece.weight_kg - a.piece.weight_kg || a.piece.piece_id.localeCompare(b.piece.piece_id));
+  for (const placement of weighted) {
+    const available = [0, 1].filter((index) => rows[index].length < maxColumns);
+    const rowIndex = available.sort((a, b) => rowWeights[a] - rowWeights[b] || rows[a].length - rows[b].length || a - b)[0];
+    rows[rowIndex].push(placement);
+    rowWeights[rowIndex] += placement.piece.weight_kg;
+  }
+
+  const sideMargin = widthRemainder / 2;
+  const placements = rows.flatMap((row, rowIndex) => {
+    const startX = (load.spec.inner_L_cm - row.length * first.orient_L_cm) / 2;
+    const positions = row
+      .map((_, index) => startX + index * first.orient_L_cm)
+      .sort((a, b) => Math.abs(a + first.orient_L_cm / 2 - load.spec.inner_L_cm / 2) - Math.abs(b + first.orient_L_cm / 2 - load.spec.inner_L_cm / 2));
+    return [...row]
+      .sort((a, b) => b.piece.weight_kg - a.piece.weight_kg || a.piece.piece_id.localeCompare(b.piece.piece_id))
+      .map((placement, index) => ({
+        ...placement,
+        placed_x_cm: positions[index],
+        placed_y_cm: sideMargin + rowIndex * first.orient_W_cm,
+      }));
+  });
+  return { ...load, placements };
+};
+
+const balanceSpatialPlacements = (load: ContainerLoad): ContainerLoad => {
+  if (load.spec.type.endsWith("FR") || load.spec.type.endsWith("OT") || load.placements.some((placement) => placement.placed_z_cm !== 0)) return load;
+  return balanceUniformLoad(load) ?? centerExistingRows(load);
+};
+
+export const packPieces = (spec: ContainerSpec, pieces: Piece[], maxContainers?: number): PackResult => {
+  const packed = packSequentially(spec, pieces, maxContainers);
+  return { ...packed, loads: rebalanceLoadsByWeight(spec, packed.loads).map(balanceSpatialPlacements) };
 };

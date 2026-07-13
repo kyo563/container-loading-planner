@@ -1,5 +1,5 @@
 import { ArrowRight, Boxes, CheckCircle2, Lock, Ruler, ShieldCheck, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { CargoInput } from "./components/CargoInput";
 import { ContainerEditor } from "./components/ContainerEditor";
@@ -11,9 +11,11 @@ import { VolumeConverter } from "./components/VolumeConverter";
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, SAMPLE_CARGO } from "./domain/constants";
 import { expandPieces, validateCargoRows } from "./domain/input";
 import { estimatePlan, validatePlan } from "./domain/planner";
+import { decodeSharedPlan, tokenFromHash } from "./domain/sharedPlan";
 import type { AppView, CargoRow, ContainerSpec, PlanResult, PlanningSettings, ValidationIssue } from "./domain/types";
 
 const MAX_BROWSER_PIECES = 5_000;
+const DEFAULT_COUNTS: Record<string, number> = { "20GP": 0, "40GP": 0, "40HC": 1, "20OT": 0, "40OT": 0, "20FR": 0, "40FR": 0, RF: 0 };
 
 function PlannerPage({
   rows,
@@ -21,20 +23,34 @@ function PlannerPage({
   isSample,
   setIsSample,
   specs,
+  mode,
+  setMode,
+  counts,
+  setCounts,
+  settings,
+  setSettings,
+  restoreRevision,
+  restoreMessage,
 }: {
   rows: CargoRow[];
   setRows: (rows: CargoRow[]) => void;
   isSample: boolean;
   setIsSample: (value: boolean) => void;
   specs: ContainerSpec[];
+  mode: "estimate" | "validate";
+  setMode: (value: "estimate" | "validate") => void;
+  counts: Record<string, number>;
+  setCounts: (value: Record<string, number>) => void;
+  settings: PlanningSettings;
+  setSettings: (value: PlanningSettings) => void;
+  restoreRevision: number;
+  restoreMessage: string;
 }) {
-  const [mode, setMode] = useState<"estimate" | "validate">("estimate");
-  const [counts, setCounts] = useState<Record<string, number>>({ "20GP": 0, "40GP": 0, "40HC": 1, "20OT": 0, "40OT": 0, "20FR": 0, "40FR": 0, RF: 0 });
-  const [settings, setSettings] = useState<PlanningSettings>({ ...DEFAULT_SETTINGS });
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [error, setError] = useState("");
   const [result, setResult] = useState<PlanResult | null>(null);
   const [calculating, setCalculating] = useState(false);
+  const handledRestoreRevision = useRef(0);
 
   const invalidateResult = () => {
     setResult(null);
@@ -86,6 +102,12 @@ function PlannerPage({
     }, 30);
   };
 
+  useEffect(() => {
+    if (!restoreRevision || handledRestoreRevision.current === restoreRevision) return;
+    handledRestoreRevision.current = restoreRevision;
+    calculate();
+  }, [restoreRevision]);
+
   return (
     <main>
       <section className="planner-hero no-print">
@@ -105,6 +127,7 @@ function PlannerPage({
       </section>
 
       <div className="planner-shell no-print">
+        {restoreMessage && <div className="restore-banner" role="status"><CheckCircle2 /><div><strong>共有プランを復元しました</strong><p>{restoreMessage}</p></div></div>}
         <div className="planner-grid">
           <CargoInput rows={rows} issues={issues} onChange={changeRows} isSample={isSample} />
           <PlanSettings
@@ -127,7 +150,7 @@ function PlannerPage({
         </section>
         {error && <div className="global-error" role="alert"><strong>計算を実行できません</strong><p>{error}</p>{issues.length > 0 && <ul>{issues.slice(0, 5).map((issue, index) => <li key={`${issue.row}-${issue.field}-${index}`}>{issue.row}行目: {issue.message}</li>)}</ul>}</div>}
       </div>
-      {result && <div className="results-shell"><PlanResults result={result} /></div>}
+      {result && <div className="results-shell"><PlanResults result={result} sharePlan={{ rows, mode, counts, settings, specs }} /></div>}
     </main>
   );
 }
@@ -137,10 +160,41 @@ export default function App() {
   const [rows, setRows] = useState<CargoRow[]>(() => SAMPLE_CARGO.map((row) => ({ ...row })));
   const [isSample, setIsSample] = useState(true);
   const [specs, setSpecs] = useState<ContainerSpec[]>(() => DEFAULT_CONTAINERS.map((spec) => ({ ...spec })));
+  const [mode, setMode] = useState<"estimate" | "validate">("estimate");
+  const [counts, setCounts] = useState<Record<string, number>>({ ...DEFAULT_COUNTS });
+  const [settings, setSettings] = useState<PlanningSettings>({ ...DEFAULT_SETTINGS });
+  const [restoreRevision, setRestoreRevision] = useState(0);
+  const [restoreMessage, setRestoreMessage] = useState("");
+  const [restoreError, setRestoreError] = useState("");
+  const restoreStarted = useRef(false);
+
+  useEffect(() => {
+    if (restoreStarted.current) return;
+    restoreStarted.current = true;
+    const token = tokenFromHash(window.location.hash);
+    if (!token) return;
+    void decodeSharedPlan(token).then((shared) => {
+      setRows(shared.rows);
+      setIsSample(false);
+      setSpecs(shared.specs);
+      setMode(shared.mode);
+      setCounts(shared.counts);
+      setSettings(shared.settings);
+      setView("planner");
+      setRestoreError("");
+      setRestoreMessage(`${shared.rows.length}行の貨物情報と計算条件を読み込み、積載プランを再計算しました。`);
+      setRestoreRevision((current) => current + 1);
+    }).catch((caught: unknown) => {
+      setRestoreMessage("");
+      setRestoreError(caught instanceof Error ? caught.message : "共有プランを読み込めませんでした。");
+    });
+  }, []);
+
   return (
     <div className="app">
       <Header current={view} onNavigate={setView} />
-      {view === "planner" && <PlannerPage rows={rows} setRows={setRows} isSample={isSample} setIsSample={setIsSample} specs={specs} />}
+      {restoreError && <div className="restore-error" role="alert"><strong>共有プランを読み込めません</strong><p>{restoreError}</p></div>}
+      {view === "planner" && <PlannerPage rows={rows} setRows={setRows} isSample={isSample} setIsSample={setIsSample} specs={specs} mode={mode} setMode={setMode} counts={counts} setCounts={setCounts} settings={settings} setSettings={setSettings} restoreRevision={restoreRevision} restoreMessage={restoreMessage} />}
       {view === "converter" && <VolumeConverter />}
       {view === "containers" && <ContainerEditor specs={specs} onChange={setSpecs} />}
       {view === "guide" && <Guide />}
@@ -148,4 +202,3 @@ export default function App() {
     </div>
   );
 }
-
