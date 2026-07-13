@@ -147,13 +147,13 @@ class ShelfPacker {
   }
 
   private canPlace(piece: Piece, profile: FitOrientation): boolean {
-    if (this.isFr() && piece.m3 <= 2) return false;
     if (this.totalWeight() + piece.weight_kg > this.spec.max_payload_kg) return false;
     if (this.hasIncompatibility(piece)) return false;
     return this.canStack(piece, profile);
   }
 
   private startNewRow(): boolean {
+    if (this.isFr()) return false;
     if (this.rowDepth <= 0 || this.curY + this.rowDepth + EPSILON > this.spec.inner_W_cm) return false;
     this.curX = 0;
     this.curY += this.rowDepth;
@@ -403,7 +403,20 @@ const balanceUniformLoad = (load: ContainerLoad): ContainerLoad | null => {
 };
 
 const balanceSpatialPlacements = (load: ContainerLoad): ContainerLoad => {
-  if (load.spec.type.endsWith("FR") || load.spec.type.endsWith("OT") || load.placements.some((placement) => placement.placed_z_cm !== 0)) return load;
+  if (load.spec.type.endsWith("FR") || load.spec.type.endsWith("OT")) {
+    const minX = Math.min(...load.placements.map((placement) => placement.placed_x_cm));
+    const maxX = Math.max(...load.placements.map((placement) => placement.placed_x_cm + placement.orient_L_cm));
+    const shiftX = Math.max(0, (load.spec.inner_L_cm - (maxX - minX)) / 2 - minX);
+    return {
+      ...load,
+      placements: load.placements.map((placement) => ({
+        ...placement,
+        placed_x_cm: placement.placed_x_cm + shiftX,
+        placed_y_cm: (load.spec.inner_W_cm - placement.orient_W_cm) / 2,
+      })),
+    };
+  }
+  if (load.placements.some((placement) => placement.placed_z_cm !== 0)) return load;
   return balanceUniformLoad(load) ?? centerExistingRows(load);
 };
 
