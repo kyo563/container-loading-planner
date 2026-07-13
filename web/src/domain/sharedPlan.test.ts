@@ -40,4 +40,12 @@ describe("sharedPlan", () => {
     const url = `https://example.com/container-loading-planner/#plan=${token}`;
     expect(() => QRCode.create(url, { errorCorrectionLevel: "L" })).not.toThrow();
   });
+
+  it("業務上不正な貨物値を共有前に拒否する", async () => {
+    await expect(encodeSharedPlan({ ...state, rows: [{ ...SAMPLE_CARGO[0], qty: -1 }] })).rejects.toThrow(/貨物情報が不正/u);
+  });
+
+  it("不明なコンテナタイプの指定本数を拒否する", async () => {
+    await expect(encodeSharedPlan({ ...state, counts: { UNKNOWN: 1 } })).rejects.toThrow(/不明なコンテナタイプ/u);
+  });
 });
