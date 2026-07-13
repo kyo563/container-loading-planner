@@ -85,6 +85,17 @@ describe("estimatePlan", () => {
 });
 
 describe("validatePlan", () => {
+  it("小数や負数の指定本数を計算前に拒否する", () => {
+    const pieces = expandPieces([cargo()]);
+    expect(() => validatePlan(pieces, DEFAULT_CONTAINERS, { "40HC": 0.5 }, DEFAULT_SETTINGS)).toThrow(/整数/u);
+    expect(() => validatePlan(pieces, DEFAULT_CONTAINERS, { "40HC": -1 }, DEFAULT_SETTINGS)).toThrow(/整数/u);
+  });
+
+  it("重複した貨物内部IDを計算前に拒否する", () => {
+    const piece = expandPieces([cargo()])[0];
+    expect(() => estimatePlan([piece, piece], DEFAULT_CONTAINERS, DEFAULT_SETTINGS)).toThrow(/重複/u);
+  });
+
   it("固定本数モードで特殊コンテナ指定を実際に使用する", () => {
     const pieces = expandPieces([cargo({ L_cm: 500, W_cm: 280, H_cm: 180, weight_kg: 5_000 })]);
     const result = validatePlan(pieces, DEFAULT_CONTAINERS, { "40FR": 1 }, DEFAULT_SETTINGS);
