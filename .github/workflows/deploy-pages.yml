@@ -42,6 +42,11 @@ jobs:
       - name: Build static site
         run: npm run build
 
+      - name: Verify branch-published files are current
+        run: |
+          diff -q dist/index.html ../index.html
+          diff -qr --exclude='*.map' dist/assets ../assets
+
       - name: Configure GitHub Pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
@@ -63,4 +68,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
