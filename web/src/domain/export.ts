@@ -2,6 +2,7 @@ import Papa from "papaparse";
 
 import { buildContainerKpis, containerLabel, summarizeCounts } from "./reporting";
 import { containerKey } from "./planner";
+import { oogDisplayMetrics } from "./oogDisplay";
 import type { CargoRow, PlanResult } from "./types";
 
 const safeCell = (value: unknown): unknown => {
@@ -19,6 +20,7 @@ export const placementRows = (result: PlanResult): Record<string, unknown>[] =>
     const weight = result.weight_audit_by_container.get(key);
     return load.placements.map((placement, index) => {
       const oog = result.oog_results.get(placement.piece.piece_id);
+      const displayOog = oogDisplayMetrics(placement, load.spec, oog);
       return {
         container_label: containerLabel(load),
         container_type: load.spec.type,
@@ -43,6 +45,9 @@ export const placementRows = (result: PlanResult): Record<string, unknown>[] =>
         oog_flag: oog?.oog_flag ?? false,
         oog_over_L_cm: oog?.over_L_cm ?? 0,
         oog_over_W_cm: oog?.over_W_cm ?? 0,
+        oog_ow_total_cm: displayOog.owTotalCm,
+        oog_ow_each_left_cm: displayOog.owEachCm,
+        oog_ow_each_right_cm: displayOog.owEachCm,
         oog_over_H_cm: oog?.over_H_cm ?? 0,
         door_passable: oog?.door_passable ?? true,
         special_container_reason: result.special_reason_by_piece.get(placement.piece.piece_id) ?? "",
@@ -105,13 +110,17 @@ export const exportExcelReport = async (result: PlanResult): Promise<void> => {
   }));
   const placements = safeRows(placementRows(result));
   const loadingPlan = result.loads.flatMap((load) =>
-    load.placements.map((placement, index) => ({
+    load.placements.map((placement, index) => {
+      const oog = result.oog_results.get(placement.piece.piece_id);
+      const displayOog = oogDisplayMetrics(placement, load.spec, oog);
+      return ({
       コンテナ: containerLabel(load),
       手順: index + 1,
       貨物ID: placement.piece.piece_id,
       品名: safeCell(placement.piece.desc),
       配置指示: `x=${placement.placed_x_cm.toFixed(1)}cm, y=${placement.placed_y_cm.toFixed(1)}cm, z=${placement.placed_z_cm.toFixed(1)}cm`,
-    })),
+      OOG寸法: oog?.oog_flag ? `OH ${displayOog.ohCm}cm / OW total ${displayOog.owTotalCm}cm / each ${displayOog.owEachCm}cm` : "—",
+    });}),
   );
   const unplaced = result.unplaced.map((piece) => {
     const oog = result.oog_results.get(piece.piece_id);
