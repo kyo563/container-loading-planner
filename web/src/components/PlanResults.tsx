@@ -20,6 +20,15 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const kpis = useMemo(() => buildContainerKpis(result), [result]);
   const counts = useMemo(() => summarizeCounts(result), [result]);
   const [selectedKey, setSelectedKey] = useState(() => result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
+  const [exportError, setExportError] = useState("");
+  const runExport = async (action: () => void | Promise<void>): Promise<void> => {
+    setExportError("");
+    try {
+      await action();
+    } catch (caught) {
+      setExportError(caught instanceof Error ? caught.message : "帳票を作成できませんでした。もう一度お試しください。");
+    }
+  };
   useEffect(() => {
     setSelectedKey(result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
   }, [result]);
@@ -62,11 +71,12 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
         </div>
         <div className="result-actions no-print">
           <PlanShare plan={sharePlan} />
-          <button className="button secondary" onClick={() => void exportPlacementsCsv(result)}><Download size={16} />CSV</button>
-          <button className="button secondary" onClick={() => void exportExcelReport(result)}><FileSpreadsheet size={16} />Excel帳票</button>
-          <button className="button secondary" onClick={printPlan}><Printer size={16} />印刷 / PDF</button>
+          <button className="button secondary" onClick={() => void runExport(() => exportPlacementsCsv(result))}><Download size={16} />CSV</button>
+          <button className="button secondary" onClick={() => void runExport(() => exportExcelReport(result))}><FileSpreadsheet size={16} />Excel帳票</button>
+          <button className="button secondary" onClick={() => void runExport(printPlan)}><Printer size={16} />印刷 / PDF</button>
         </div>
       </div>
+      {exportError && <div className="global-error no-print" role="alert"><strong>帳票を出力できません</strong><p>{exportError}</p></div>}
 
       <div className={result.unplaced.length ? "outcome-banner warning" : "outcome-banner success"}>
         <span className="outcome-icon">{result.unplaced.length ? <AlertTriangle /> : <Check />}</span>

@@ -11,6 +11,7 @@ import type {
   WeightAuditMetrics,
 } from "./types";
 import { ceilTo } from "./rounding";
+import { assertValidPlanningInput } from "./validation";
 
 const keyFor = (type: string, index: number): string => `${type}-${index}`;
 
@@ -252,6 +253,7 @@ export const estimatePlan = (
   specs: ContainerSpec[],
   settings: PlanningSettings,
 ): PlanResult => {
+  assertValidPlanningInput(pieces, specs, settings);
   const standardSpecs = specs.filter((spec) => spec.category === "STANDARD");
   const specialSpecs = specs.filter((spec) => spec.category === "SPECIAL");
   const refSpec = standardSpecs.find((spec) => spec.type === "40HC") ?? standardSpecs[0];
@@ -361,13 +363,14 @@ export const validatePlan = (
   requestedCounts: Record<string, number>,
   settings: PlanningSettings,
 ): PlanResult => {
+  assertValidPlanningInput(pieces, specs, settings, requestedCounts);
   const standardSpecs = specs.filter((spec) => spec.category === "STANDARD");
   const refSpec = standardSpecs.find((spec) => spec.type === "40HC") ?? standardSpecs[0];
   if (!refSpec) throw new Error("STANDARDコンテナ仕様がありません。");
   let remaining = sortPieces(pieces);
   const loads: ContainerLoad[] = [];
   for (const spec of specs) {
-    const count = Math.max(0, Math.floor(requestedCounts[spec.type] ?? 0));
+    const count = requestedCounts[spec.type] ?? 0;
     if (!count || !remaining.length) continue;
     const packed = packPieces(spec, remaining, count);
     loads.push(...packed.loads);
