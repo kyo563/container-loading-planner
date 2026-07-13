@@ -12,13 +12,15 @@ interface ContainerLayoutProps {
 }
 
 export function ContainerLayout({ load }: ContainerLayoutProps) {
+  const minWidth = Math.min(0, ...load.placements.map((placement) => placement.placed_y_cm));
   const maxWidth = Math.max(
     load.spec.inner_W_cm,
     ...load.placements.map((placement) => placement.placed_y_cm + placement.orient_W_cm),
   );
   const paddingX = load.spec.inner_L_cm * 0.025;
-  const paddingY = maxWidth * 0.09;
-  const viewBox = `${-paddingX} ${-paddingY} ${load.spec.inner_L_cm + paddingX * 2} ${maxWidth + paddingY * 2}`;
+  const drawingWidth = maxWidth - minWidth;
+  const paddingY = drawingWidth * 0.09;
+  const viewBox = `${-paddingX} ${minWidth - paddingY} ${load.spec.inner_L_cm + paddingX * 2} ${drawingWidth + paddingY * 2}`;
   return (
     <svg className="container-layout" viewBox={viewBox} role="img" aria-label={`${load.spec.type}の上面配置図`}>
       <defs>
@@ -71,4 +73,3 @@ export function ContainerLayout({ load }: ContainerLayoutProps) {
     </svg>
   );
 }
-

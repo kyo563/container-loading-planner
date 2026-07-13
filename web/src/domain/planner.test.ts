@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, SAMPLE_CARGO } from "./constants";
 import { expandPieces } from "./input";
 import { containerKey, estimatePlan, validatePlan } from "./planner";
+import { oogDisplayMetrics } from "./oogDisplay";
 
 const cargo = (overrides: Partial<(typeof SAMPLE_CARGO)[number]> = {}) => ({
   ...SAMPLE_CARGO[0],
@@ -46,6 +47,33 @@ describe("estimatePlan", () => {
     expect(result.unplaced).toHaveLength(0);
     expect(result.loads[0].spec.type).toMatch(/FR$/);
     expect(result.oog_results.get("T001#1")?.over_W_cm).toBeGreaterThan(0);
+    const placement = result.loads[0].placements[0];
+    const metrics = oogDisplayMetrics(placement, result.loads[0].spec, result.oog_results.get("T001#1"));
+    expect(placement.placed_y_cm).toBe(-20);
+    expect(metrics.owTotalCm).toBe(40);
+    expect(metrics.owEachCm).toBe(20);
+  });
+
+  it("OH貨物をOTの床面中央へ配置する", () => {
+    const result = estimatePlan(expandPieces([cargo({ H_cm: 300, L_cm: 200, W_cm: 150, weight_kg: 2_500 })]), DEFAULT_CONTAINERS, DEFAULT_SETTINGS);
+    expect(result.loads[0].spec.type).toMatch(/OT$/);
+    const placement = result.loads[0].placements[0];
+    expect(placement.placed_y_cm + placement.orient_W_cm / 2).toBeCloseTo(result.loads[0].spec.inner_W_cm / 2);
+    expect(placement.placed_x_cm + placement.orient_L_cm / 2).toBeCloseTo(result.loads[0].spec.inner_L_cm / 2);
+  });
+
+  it("小型の幅超過貨物をFRへ自動配置しない", () => {
+    const result = estimatePlan(expandPieces([cargo({ L_cm: 50, W_cm: 240, H_cm: 10, weight_kg: 100 })]), DEFAULT_CONTAINERS, DEFAULT_SETTINGS);
+    expect(result.loads).toHaveLength(0);
+    expect(result.unplaced).toHaveLength(1);
+    expect(result.decision_reasons.join(" ")).toContain("振落しリスク");
+  });
+
+  it("FR貨物を横並びにせず一列で配置する", () => {
+    const rows = [0, 1, 2].map((index) => cargo({ uid: `fr-row-${index}`, id: `FR${index}`, L_cm: 500, W_cm: 280, H_cm: 180, weight_kg: 3_000 }));
+    const result = estimatePlan(expandPieces(rows), DEFAULT_CONTAINERS, DEFAULT_SETTINGS);
+    expect(result.loads).toHaveLength(2);
+    expect(result.loads.every((load) => new Set(load.placements.map((placement) => placement.placed_y_cm)).size === 1)).toBe(true);
   });
 
   it("40FRのデッキ長を超える貨物を在来船検討へ回す", () => {
