@@ -84,6 +84,27 @@ const weightBalanceReason = (loads: ContainerLoad[]): string | null => {
     : null;
 };
 
+const incompatibilityReason = (pieces: Piece[], loads: ContainerLoad[]): string | null => {
+  const containerByPiece = new Map<string, string>();
+  for (const load of loads) {
+    const key = keyFor(load.spec.type, load.index);
+    for (const placement of load.placements) containerByPiece.set(placement.piece.piece_id, key);
+  }
+  const separatedPairs = new Set<string>();
+  for (const piece of pieces) {
+    const forbiddenIds = piece.incompatible_with_ids.split(",").map((value) => value.trim()).filter(Boolean);
+    for (const forbiddenId of forbiddenIds) {
+      const counterparts = pieces.filter((candidate) => candidate.orig_id === forbiddenId);
+      if (counterparts.some((counterpart) => containerByPiece.get(counterpart.piece_id) !== containerByPiece.get(piece.piece_id))) {
+        separatedPairs.add([piece.orig_id, forbiddenId].sort().join(" ↔ "));
+      }
+    }
+  }
+  return separatedPairs.size
+    ? `混載不可指定（${[...separatedPairs].join("、")}）により、対象貨物を別コンテナへ分けました。`
+    : null;
+};
+
 const packMultiType = (pieces: Piece[], specs: ContainerSpec[]): { loads: ContainerLoad[]; unplaced: Piece[] } => {
   let remaining = [...pieces];
   const loads: ContainerLoad[] = [];
@@ -313,6 +334,8 @@ export const estimatePlan = (
   if (breakbulk.length) decisionReasons.push("40FRのデッキ長または最大積載重量を超える貨物をコンテナ計画から除外しました。");
   const balanceReason = weightBalanceReason(loads);
   if (balanceReason) decisionReasons.push(balanceReason);
+  const separatedReason = incompatibilityReason(pieces, loads);
+  if (separatedReason) decisionReasons.push(separatedReason);
   return {
     mode: "estimate",
     loads,
@@ -349,6 +372,8 @@ export const validatePlan = (
   const decisionReasons = remaining.length ? ["指定本数に収まらない貨物があります。積載不可一覧とOOG判定を確認してください。"] : [];
   const balanceReason = weightBalanceReason(normalized);
   if (balanceReason) decisionReasons.push(balanceReason);
+  const separatedReason = incompatibilityReason(pieces, normalized);
+  if (separatedReason) decisionReasons.push(separatedReason);
   return {
     mode: "validate",
     loads: normalized,
