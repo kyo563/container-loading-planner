@@ -2,6 +2,7 @@ import { AlertCircle, AlertTriangle, Check, ChevronRight, Download, FileSpreadsh
 import { useEffect, useMemo, useState } from "react";
 
 import { exportExcelReport, exportPlacementsCsv, printPlan } from "../domain/export";
+import { oogDisplayMetrics } from "../domain/oogDisplay";
 import { containerKey } from "../domain/planner";
 import { buildContainerKpis, containerLabel, summarizeCounts } from "../domain/reporting";
 import { fmt, fmtInt } from "../domain/rounding";
@@ -37,6 +38,16 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
     m3: totals.m3 + kpi.total_m3,
     weight: totals.weight + kpi.total_gross_kg,
   }), { pieces: 0, ft: 0, m3: 0, weight: 0 }), [kpis]);
+  const oogMetricsFor = (pieceId: string) => {
+    const load = result.loads.find((candidate) => candidate.placements.some((placement) => placement.piece.piece_id === pieceId));
+    const placement = load?.placements.find((candidate) => candidate.piece.piece_id === pieceId);
+    const oog = result.oog_results.get(pieceId);
+    return load && placement ? oogDisplayMetrics(placement, load.spec, oog) : {
+      ohCm: oog?.over_H_cm ?? 0,
+      owTotalCm: oog?.over_W_cm ?? 0,
+      owEachCm: (oog?.over_W_cm ?? 0) / 2,
+    };
+  };
 
   return (
     <section className="results-section" id="plan-results">
@@ -105,6 +116,14 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
               <div className="detail-badges"><span>{selectedLoad.placements.length} PCS</span><span>{fmt(selectedKpi.total_m3, 2)} M³</span></div>
             </div>
             <div className="layout-stage"><ContainerLayout load={selectedLoad} /></div>
+            {selectedLoad.placements.some((placement) => result.oog_results.get(placement.piece.piece_id)?.oog_flag) && (
+              <div className="layout-oog-summary">
+                {selectedLoad.placements.filter((placement) => result.oog_results.get(placement.piece.piece_id)?.oog_flag).map((placement) => {
+                  const metrics = oogMetricsFor(placement.piece.piece_id);
+                  return <span key={placement.piece.piece_id}><strong>{placement.piece.piece_id}</strong> OH {fmt(metrics.ohCm, 1)} cm　OW total {fmt(metrics.owTotalCm, 1)} cm　each L/R {fmt(metrics.owEachCm, 1)} / {fmt(metrics.owEachCm, 1)} cm</span>;
+                })}
+              </div>
+            )}
             <div className="utilization-grid">
               <div>
                 <span><Weight size={16} />Payload</span><strong>{fmt(selectedKpi.payload_ratio_pct, 1)}%</strong>
@@ -142,6 +161,10 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
             <article key={key} className="print-layout-card">
               <div><h3>{containerLabel(load)}</h3><p>総個数: {load.placements.length} PCS　/　総重量: {fmtInt(kpi?.total_gross_kg ?? 0)} kg　/　総容積: {fmt(kpi?.total_m3 ?? 0, 3)} m³</p></div>
               <ContainerLayout load={load} />
+              {load.placements.filter((placement) => result.oog_results.get(placement.piece.piece_id)?.oog_flag).map((placement) => {
+                const metrics = oogMetricsFor(placement.piece.piece_id);
+                return <p key={placement.piece.piece_id}><strong>{placement.piece.piece_id}</strong>　OH {fmt(metrics.ohCm, 1)}cm ・ OW total {fmt(metrics.owTotalCm, 1)}cm ・ each L/R {fmt(metrics.owEachCm, 1)} / {fmt(metrics.owEachCm, 1)}cm</p>;
+              })}
               <p>Payload {fmt(kpi?.payload_ratio_pct ?? 0, 1)}% ・ 重心偏差 X/Y {fmt(bias?.offset_x_pct ?? 0, 1)} / {fmt(bias?.offset_y_pct ?? 0, 1)}% ・ 総重量目安 {fmtInt(weight?.gross_weight_kg ?? 0)}kg</p>
             </article>
           );
@@ -178,8 +201,8 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
       {oogEntries.length > 0 && (
         <details className="oog-details">
           <summary>OOG・入口通過判定 <span>{oogEntries.length}件</span></summary>
-          <div className="table-shell"><table className="data-table result-table"><thead><tr><th>貨物ID</th><th>基準</th><th>OL</th><th>OW</th><th>OH</th><th>入口</th><th>候補</th></tr></thead><tbody>
-            {oogEntries.map(([pieceId, oog]) => <tr key={pieceId}><td><strong>{pieceId}</strong></td><td>{oog.oog_ref_type}</td><td>{oog.over_L_cm} cm</td><td>{oog.over_W_cm} cm</td><td>{oog.over_H_cm} cm</td><td>{oog.door_passable ? "通過可" : oog.door_reason}</td><td>{oog.suggestion || "標準"}</td></tr>)}
+          <div className="table-shell"><table className="data-table result-table"><thead><tr><th>貨物ID</th><th>基準</th><th>OL</th><th>OW total</th><th>OW each L/R</th><th>OH</th><th>入口</th><th>候補</th></tr></thead><tbody>
+            {oogEntries.map(([pieceId, oog]) => { const metrics = oogMetricsFor(pieceId); return <tr key={pieceId}><td><strong>{pieceId}</strong></td><td>{oog.oog_ref_type}</td><td>{oog.over_L_cm} cm</td><td>{fmt(metrics.owTotalCm, 1)} cm</td><td>{fmt(metrics.owEachCm, 1)} / {fmt(metrics.owEachCm, 1)} cm</td><td>{fmt(metrics.ohCm, 1)} cm</td><td>{oog.door_passable ? "通過可" : oog.door_reason}</td><td>{oog.suggestion || "標準"}</td></tr>;})}
           </tbody></table></div>
         </details>
       )}
