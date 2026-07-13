@@ -83,3 +83,15 @@ export const isBreakbulkRequired = (piece: Piece, fortyFr?: ContainerSpec): bool
   return !footprintFits || piece.weight_kg > payload;
 };
 
+const FR_MIN_FOOTPRINT_M2 = 2;
+const FR_MIN_VOLUME_M3 = 2;
+const FR_MIN_WEIGHT_KG = 2_000;
+
+export const isFrCargoSubstantial = (piece: Piece): boolean => {
+  const largestFootprintM2 = Math.max(
+    piece.L_cm * piece.W_cm,
+    piece.L_cm * piece.H_cm,
+    piece.W_cm * piece.H_cm,
+  ) / 10_000;
+  return largestFootprintM2 >= FR_MIN_FOOTPRINT_M2 || piece.m3 >= FR_MIN_VOLUME_M3 || piece.weight_kg >= FR_MIN_WEIGHT_KG;
+};
