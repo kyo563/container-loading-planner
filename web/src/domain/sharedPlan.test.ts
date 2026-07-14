@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import QRCode from "qrcode";
 
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, SAMPLE_CARGO } from "./constants";
-import { decodeSharedPlan, encodeSharedPlan, tokenFromHash } from "./sharedPlan";
+import { decodeSharedPlan, encodeSharedPlan, tokenFromHash, tokenFromScannedValue } from "./sharedPlan";
 
 const state = {
   rows: SAMPLE_CARGO,
@@ -33,6 +33,12 @@ describe("sharedPlan", () => {
   it("URLフラグメントから共有トークンを取得する", () => {
     expect(tokenFromHash("#plan=lp1.check.payload")).toBe("lp1.check.payload");
     expect(tokenFromHash("#other=value")).toBeNull();
+  });
+
+  it("カメラで読み取った共有URLと生トークンから復元文字列を取得する", () => {
+    expect(tokenFromScannedValue("https://example.com/app/#plan=lp1.check.payload")).toBe("lp1.check.payload");
+    expect(tokenFromScannedValue("lp1.check.payload")).toBe("lp1.check.payload");
+    expect(() => tokenFromScannedValue("https://example.com/not-loadpilot")).toThrow(/LoadPilot/u);
   });
 
   it("標準サンプルを1個のQRコードへ格納できる", async () => {
