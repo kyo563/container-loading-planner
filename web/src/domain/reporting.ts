@@ -1,4 +1,4 @@
-import type { ContainerKpi, ContainerLoad, PlanResult } from "./types";
+import type { ContainerKpi, ContainerLoad, Piece, PlanResult } from "./types";
 import { containerKey } from "./planner";
 
 const CIRCLED = ["", "①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫", "⑬", "⑭", "⑮", "⑯", "⑰", "⑱", "⑲", "⑳"];
@@ -37,3 +37,26 @@ export const summarizeCounts = (result: PlanResult): Record<string, number> => {
   return counts;
 };
 
+export interface PackingListItem {
+  position: number;
+  piece: Piece;
+  placedZCm: number;
+}
+
+export interface ContainerPackingList {
+  containerKey: string;
+  containerLabel: string;
+  pieceCount: number;
+  totalWeightKg: number;
+  totalM3: number;
+  items: PackingListItem[];
+}
+
+export const buildContainerPackingLists = (result: PlanResult): ContainerPackingList[] => result.loads.map((load) => ({
+  containerKey: containerKey(load.spec.type, load.index),
+  containerLabel: containerLabel(load),
+  pieceCount: load.placements.length,
+  totalWeightKg: load.placements.reduce((sum, placement) => sum + placement.piece.weight_kg, 0),
+  totalM3: load.placements.reduce((sum, placement) => sum + placement.piece.m3, 0),
+  items: load.placements.map((placement, index) => ({ position: index + 1, piece: placement.piece, placedZCm: placement.placed_z_cm })),
+}));

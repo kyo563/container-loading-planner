@@ -1,10 +1,10 @@
-import { AlertCircle, AlertTriangle, Check, ChevronRight, Download, FileSpreadsheet, Printer, Scale, Ship, Weight } from "lucide-react";
+import { AlertCircle, AlertTriangle, Check, ChevronDown, ChevronRight, Download, FileSpreadsheet, Printer, Scale, Ship, Weight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { exportExcelReport, exportPlacementsCsv, printPlan } from "../domain/export";
 import { oogDisplayMetrics } from "../domain/oogDisplay";
 import { containerKey } from "../domain/planner";
-import { buildContainerKpis, containerLabel, summarizeCounts } from "../domain/reporting";
+import { buildContainerKpis, buildContainerPackingLists, containerLabel, summarizeCounts } from "../domain/reporting";
 import { fmt, fmtInt } from "../domain/rounding";
 import type { ShareablePlanState } from "../domain/sharedPlan";
 import type { PlanResult } from "../domain/types";
@@ -18,9 +18,12 @@ interface PlanResultsProps {
 
 export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const kpis = useMemo(() => buildContainerKpis(result), [result]);
+  const packingLists = useMemo(() => buildContainerPackingLists(result), [result]);
   const counts = useMemo(() => summarizeCounts(result), [result]);
   const [selectedKey, setSelectedKey] = useState(() => result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
   const [exportError, setExportError] = useState("");
+  const [containerReportView, setContainerReportView] = useState<"summary" | "packing">("summary");
+  const [expandedPackingLists, setExpandedPackingLists] = useState<Set<string>>(() => new Set(packingLists[0] ? [packingLists[0].containerKey] : []));
   const runExport = async (action: () => void | Promise<void>): Promise<void> => {
     setExportError("");
     try {
@@ -31,7 +34,13 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   };
   useEffect(() => {
     setSelectedKey(result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
+    setExpandedPackingLists(new Set(packingLists[0] ? [packingLists[0].containerKey] : []));
   }, [result]);
+  const togglePackingList = (key: string) => setExpandedPackingLists((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
   const selectedLoad = result.loads.find((load) => containerKey(load.spec.type, load.index) === selectedKey) ?? result.loads[0];
   const selectedKpi = kpis.find((kpi) => kpi.container_key === selectedKey) ?? kpis[0];
   const selectedBias = selectedLoad ? result.bias_by_container.get(containerKey(selectedLoad.spec.type, selectedLoad.index)) : undefined;
@@ -189,10 +198,32 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
       </div>
 
       <div className="result-table-section">
-        <div className="section-title-row"><div><span className="eyebrow">CONTAINER KPI</span><h3>コンテナ別集計</h3></div></div>
-        <div className="table-shell"><table className="data-table result-table"><thead><tr><th>コンテナ</th><th>pcs</th><th>F/T</th><th>M³</th><th>貨物重量</th><th>Payload</th><th>容積</th><th>監査</th></tr></thead><tbody>
+        <div className="section-title-row"><div><span className="eyebrow">CONTAINER REPORT</span><h3>コンテナ別集計・パッキングリスト</h3></div>
+          <div className="report-view-switch no-print" role="group" aria-label="コンテナ帳票の表示切替">
+            <button type="button" className={containerReportView === "summary" ? "active" : ""} onClick={() => setContainerReportView("summary")}>集計</button>
+            <button type="button" className={containerReportView === "packing" ? "active" : ""} onClick={() => setContainerReportView("packing")}>パッキングリスト</button>
+          </div>
+        </div>
+        <div className={containerReportView === "summary" ? "container-report-summary" : "container-report-summary report-view-hidden"}><div className="table-shell"><table className="data-table result-table"><thead><tr><th>コンテナ</th><th>pcs</th><th>F/T</th><th>M³</th><th>貨物重量</th><th>Payload</th><th>容積</th><th>監査</th></tr></thead><tbody>
           {kpis.map((kpi) => <tr key={kpi.container_key}><td><strong>{kpi.container_label}</strong></td><td>{kpi.piece_count}</td><td>{fmt(kpi.total_ft, 3)}</td><td>{fmt(kpi.total_m3, 3)}</td><td>{fmtInt(kpi.total_gross_kg)} kg</td><td>{fmt(kpi.payload_ratio_pct, 1)}%</td><td>{fmt(kpi.volume_ratio_pct, 1)}%</td><td>{kpi.bias_warn || kpi.weight_alert ? <span className="status-chip red">要確認</span> : <span className="status-chip green">範囲内</span>}</td></tr>)}
-        </tbody><tfoot><tr><td><strong>積載済み総計</strong></td><td><strong>{loadedTotals.pieces}</strong></td><td><strong>{fmt(loadedTotals.ft, 3)}</strong></td><td><strong>{fmt(loadedTotals.m3, 3)}</strong></td><td><strong>{fmtInt(loadedTotals.weight)} kg</strong></td><td>—</td><td>—</td><td>—</td></tr></tfoot></table></div>
+        </tbody><tfoot><tr><td><strong>積載済み総計</strong></td><td><strong>{loadedTotals.pieces}</strong></td><td><strong>{fmt(loadedTotals.ft, 3)}</strong></td><td><strong>{fmt(loadedTotals.m3, 3)}</strong></td><td><strong>{fmtInt(loadedTotals.weight)} kg</strong></td><td>—</td><td>—</td><td>—</td></tr></tfoot></table></div></div>
+        <div className={containerReportView === "packing" ? "packing-list-view" : "packing-list-view report-view-hidden"}>
+          <div className="packing-list-tools no-print"><span>コンテナを開くと個別明細を確認できます。</span><button type="button" onClick={() => setExpandedPackingLists(expandedPackingLists.size === packingLists.length ? new Set() : new Set(packingLists.map((list) => list.containerKey)))}>{expandedPackingLists.size === packingLists.length ? "すべて閉じる" : "すべて展開"}</button></div>
+          {packingLists.map((list) => {
+            const expanded = expandedPackingLists.has(list.containerKey);
+            return <article className="packing-list-card" key={list.containerKey}>
+              <button type="button" className="packing-list-heading" aria-expanded={expanded} onClick={() => togglePackingList(list.containerKey)}>
+                <span><strong>{list.containerLabel}</strong><small>{list.pieceCount} PCS</small></span>
+                <span className="packing-list-totals"><b>{fmtInt(list.totalWeightKg)} kg</b><b>{fmt(list.totalM3, 3)} m³</b><ChevronDown className={expanded ? "expanded" : ""} /></span>
+              </button>
+              <div className={expanded ? "packing-list-body" : "packing-list-body collapsed"}>
+                <div className="table-shell"><table className="data-table packing-list-table"><thead><tr><th>配置No.</th><th>貨物ID</th><th>品名</th><th>荷姿</th><th>寸法 cm</th><th>GW</th><th>M³</th><th>積付け</th></tr></thead><tbody>
+                  {list.items.map((item) => <tr key={item.piece.piece_id}><td>{item.position}</td><td><strong>{item.piece.piece_id}</strong></td><td>{item.piece.desc}</td><td>{item.piece.package_text || "—"}</td><td>{item.piece.L_cm} × {item.piece.W_cm} × {item.piece.H_cm}</td><td>{fmtInt(item.piece.weight_kg)} kg</td><td>{fmt(item.piece.m3, 3)}</td><td>{item.placedZCm > 0 ? `段積み（床上 ${fmtInt(item.placedZCm)}cm）` : "床置き"}</td></tr>)}
+                </tbody><tfoot><tr><td colSpan={4}><strong>{list.containerLabel} 合計</strong></td><td><strong>{list.pieceCount} PCS</strong></td><td><strong>{fmtInt(list.totalWeightKg)} kg</strong></td><td><strong>{fmt(list.totalM3, 3)}</strong></td><td>—</td></tr></tfoot></table></div>
+              </div>
+            </article>;
+          })}
+        </div>
       </div>
 
       {result.unplaced.length > 0 && (
