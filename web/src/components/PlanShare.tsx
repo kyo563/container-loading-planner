@@ -1,7 +1,7 @@
 import { Check, Copy, Download, Link2, QrCode, Share2, X } from "lucide-react";
 import { useState } from "react";
-import QRCode from "qrcode";
 
+import { createPlanQrData } from "../domain/planQr";
 import { buildSharedPlanUrl, type ShareablePlanState } from "../domain/sharedPlan";
 
 interface PlanShareProps {
@@ -26,11 +26,13 @@ export function PlanShare({ plan }: PlanShareProps) {
     setQrError("");
     setCopied(false);
     try {
-      const nextUrl = await buildSharedPlanUrl(plan);
-      setUrl(nextUrl);
       try {
-        setQrDataUrl(await QRCode.toDataURL(nextUrl, { errorCorrectionLevel: "L", margin: 2, width: 320, color: { dark: "#0b2239", light: "#ffffff" } }));
+        const qr = await createPlanQrData(plan);
+        setUrl(qr.url);
+        setQrDataUrl(qr.dataUrl);
       } catch {
+        const nextUrl = await buildSharedPlanUrl(plan);
+        setUrl(nextUrl);
         setQrError("このプランは1個のQRコードに収まりません。URLをコピーして共有してください。");
       }
     } catch (caught) {

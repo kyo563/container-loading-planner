@@ -1,11 +1,12 @@
 import { ArrowRight, Boxes, CheckCircle2, Lock, Ruler, ShieldCheck, Sparkles } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CargoInput } from "./components/CargoInput";
 import { ContainerEditor } from "./components/ContainerEditor";
 import { Guide } from "./components/Guide";
 import { Header } from "./components/Header";
 import { PlanResults } from "./components/PlanResults";
+import { PlanQrScanner } from "./components/PlanQrScanner";
 import { PlanSettings } from "./components/PlanSettings";
 import { VolumeConverter } from "./components/VolumeConverter";
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, SAMPLE_CARGO } from "./domain/constants";
@@ -166,33 +167,38 @@ export default function App() {
   const [restoreRevision, setRestoreRevision] = useState(0);
   const [restoreMessage, setRestoreMessage] = useState("");
   const [restoreError, setRestoreError] = useState("");
+  const [scannerOpen, setScannerOpen] = useState(false);
   const restoreStarted = useRef(false);
+
+  const restoreSharedPlan = useCallback(async (token: string): Promise<void> => {
+    const shared = await decodeSharedPlan(token);
+    setRows(shared.rows);
+    setIsSample(false);
+    setSpecs(shared.specs);
+    setMode(shared.mode);
+    setCounts(shared.counts);
+    setSettings(shared.settings);
+    setView("planner");
+    setRestoreError("");
+    setRestoreMessage(`${shared.rows.length}行の貨物情報と計算条件を読み込み、積載プランを再計算しました。`);
+    setRestoreRevision((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     if (restoreStarted.current) return;
     restoreStarted.current = true;
     const token = tokenFromHash(window.location.hash);
     if (!token) return;
-    void decodeSharedPlan(token).then((shared) => {
-      setRows(shared.rows);
-      setIsSample(false);
-      setSpecs(shared.specs);
-      setMode(shared.mode);
-      setCounts(shared.counts);
-      setSettings(shared.settings);
-      setView("planner");
-      setRestoreError("");
-      setRestoreMessage(`${shared.rows.length}行の貨物情報と計算条件を読み込み、積載プランを再計算しました。`);
-      setRestoreRevision((current) => current + 1);
-    }).catch((caught: unknown) => {
+    void restoreSharedPlan(token).catch((caught: unknown) => {
       setRestoreMessage("");
       setRestoreError(caught instanceof Error ? caught.message : "共有プランを読み込めませんでした。");
     });
-  }, []);
+  }, [restoreSharedPlan]);
 
   return (
     <div className="app">
-      <Header current={view} onNavigate={setView} />
+      <Header current={view} onNavigate={setView} onScanPlan={() => setScannerOpen(true)} />
+      <PlanQrScanner open={scannerOpen} onClose={() => setScannerOpen(false)} onToken={restoreSharedPlan} />
       {restoreError && <div className="restore-error" role="alert"><strong>共有プランを読み込めません</strong><p>{restoreError}</p></div>}
       {view === "planner" && <PlannerPage rows={rows} setRows={setRows} isSample={isSample} setIsSample={setIsSample} specs={specs} mode={mode} setMode={setMode} counts={counts} setCounts={setCounts} settings={settings} setSettings={setSettings} restoreRevision={restoreRevision} restoreMessage={restoreMessage} />}
       {view === "converter" && <VolumeConverter />}

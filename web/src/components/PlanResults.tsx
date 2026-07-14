@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { exportExcelReport, exportPlacementsCsv, printPlan } from "../domain/export";
 import { oogDisplayMetrics } from "../domain/oogDisplay";
+import { createPlanQrData } from "../domain/planQr";
 import { containerKey } from "../domain/planner";
 import { buildContainerKpis, buildContainerPackingLists, containerLabel, summarizeCounts } from "../domain/reporting";
 import { fmt, fmtInt } from "../domain/rounding";
@@ -22,6 +23,8 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const counts = useMemo(() => summarizeCounts(result), [result]);
   const [selectedKey, setSelectedKey] = useState(() => result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
   const [exportError, setExportError] = useState("");
+  const [printQrDataUrl, setPrintQrDataUrl] = useState("");
+  const [printQrError, setPrintQrError] = useState(false);
   const [containerReportView, setContainerReportView] = useState<"summary" | "packing">("summary");
   const [expandedPackingLists, setExpandedPackingLists] = useState<Set<string>>(() => new Set(packingLists[0] ? [packingLists[0].containerKey] : []));
   const runExport = async (action: () => void | Promise<void>): Promise<void> => {
@@ -36,6 +39,17 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
     setSelectedKey(result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
     setExpandedPackingLists(new Set(packingLists[0] ? [packingLists[0].containerKey] : []));
   }, [result]);
+  useEffect(() => {
+    let cancelled = false;
+    setPrintQrDataUrl("");
+    setPrintQrError(false);
+    void createPlanQrData(sharePlan, 240).then((qr) => {
+      if (!cancelled) setPrintQrDataUrl(qr.dataUrl);
+    }).catch(() => {
+      if (!cancelled) setPrintQrError(true);
+    });
+    return () => { cancelled = true; };
+  }, [sharePlan]);
   const togglePackingList = (key: string) => setExpandedPackingLists((current) => {
     const next = new Set(current);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -75,7 +89,9 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   return (
     <section className="results-section" id="plan-results">
       <div className="print-report-header print-only">
-        <h1>Container Loading Plan</h1><p>LoadPilot / {new Date().toLocaleString("ja-JP")}</p>
+        <div><h1>Container Loading Plan</h1><p>LoadPilot / {new Date().toLocaleString("ja-JP")}</p><small>QRを読み取ると、貨物情報・計算条件を復元して再編集できます。</small></div>
+        {printQrDataUrl && <img src={printQrDataUrl} alt="積載プラン復元用QRコード" />}
+        {printQrError && <span className="print-qr-error">データ量超過のためQRを掲載できません</span>}
       </div>
       <div className="results-heading">
         <div>
