@@ -1,4 +1,4 @@
-import { Box, Calculator, Container, FileQuestion, Menu, ShieldCheck, X } from "lucide-react";
+import { Box, Calculator, Camera, Container, FileQuestion, Menu, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
 
 import type { AppView } from "../domain/types";
@@ -13,9 +13,10 @@ const NAV_ITEMS: { id: AppView; label: string; icon: typeof Box }[] = [
 interface HeaderProps {
   current: AppView;
   onNavigate: (view: AppView) => void;
+  onScanPlan: () => void;
 }
 
-export function Header({ current, onNavigate }: HeaderProps) {
+export function Header({ current, onNavigate, onScanPlan }: HeaderProps) {
   const [open, setOpen] = useState(false);
   const navigate = (view: AppView) => {
     onNavigate(view);
@@ -46,6 +47,7 @@ export function Header({ current, onNavigate }: HeaderProps) {
             );
           })}
         </nav>
+        <button className="header-scan-button" type="button" onClick={onScanPlan}><Camera size={16} /><span>QR読込</span></button>
         <div className="header-assurance"><ShieldCheck size={16} />データは端末内で処理</div>
         <button className="menu-button" onClick={() => setOpen((value) => !value)} aria-label="メニューを開閉">
           {open ? <X /> : <Menu />}
@@ -54,4 +56,3 @@ export function Header({ current, onNavigate }: HeaderProps) {
     </header>
   );
 }
-
