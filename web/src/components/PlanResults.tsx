@@ -66,6 +66,11 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
       owEachCm: (oog?.over_W_cm ?? 0) / 2,
     };
   };
+  const dimensionHighlights = (metrics: string[]) => [
+    metrics.includes("length") ? "最長" : "",
+    metrics.includes("width") ? "最大幅" : "",
+    metrics.includes("height") ? "最高" : "",
+  ].filter(Boolean);
 
   return (
     <section className="results-section" id="plan-results">
@@ -218,7 +223,10 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
               </button>
               <div className={expanded ? "packing-list-body" : "packing-list-body collapsed"}>
                 <div className="table-shell"><table className="data-table packing-list-table"><thead><tr><th>配置No.</th><th>貨物ID</th><th>品名</th><th>荷姿</th><th>寸法 cm</th><th>GW</th><th>M³</th><th>積付け</th></tr></thead><tbody>
-                  {list.items.map((item) => <tr key={item.piece.piece_id}><td>{item.position}</td><td><strong>{item.piece.piece_id}</strong></td><td>{item.piece.desc}</td><td>{item.piece.package_text || "—"}</td><td>{item.piece.L_cm} × {item.piece.W_cm} × {item.piece.H_cm}</td><td>{fmtInt(item.piece.weight_kg)} kg</td><td>{fmt(item.piece.m3, 3)}</td><td>{item.placedZCm > 0 ? `段積み（床上 ${fmtInt(item.placedZCm)}cm）` : "床置き"}</td></tr>)}
+                  {list.items.map((item) => {
+                    const dimensionBadges = dimensionHighlights(item.notableMetrics);
+                    return <tr key={item.piece.piece_id}><td>{item.position}</td><td><strong>{item.piece.piece_id}</strong></td><td>{item.piece.desc}</td><td>{item.piece.package_text || "—"}</td><td className={dimensionBadges.length ? "notable-packing-cell" : ""}>{item.piece.L_cm} × {item.piece.W_cm} × {item.piece.H_cm}{dimensionBadges.map((label) => <small className="notable-badge" key={label}>{label}</small>)}</td><td className={item.notableMetrics.includes("weight") ? "notable-packing-cell" : ""}>{fmtInt(item.piece.weight_kg)} kg{item.notableMetrics.includes("weight") && <small className="notable-badge">最大GW</small>}</td><td className={item.notableMetrics.includes("volume") ? "notable-packing-cell" : ""}>{fmt(item.piece.m3, 3)}{item.notableMetrics.includes("volume") && <small className="notable-badge">最大m³</small>}</td><td>{item.placedZCm > 0 ? `段積み（床上 ${fmtInt(item.placedZCm)}cm）` : "床置き"}</td></tr>;
+                  })}
                 </tbody><tfoot><tr><td colSpan={4}><strong>{list.containerLabel} 合計</strong></td><td><strong>{list.pieceCount} PCS</strong></td><td><strong>{fmtInt(list.totalWeightKg)} kg</strong></td><td><strong>{fmt(list.totalM3, 3)}</strong></td><td>—</td></tr></tfoot></table></div>
               </div>
             </article>;
