@@ -187,3 +187,17 @@ export const tokenFromHash = (hash: string): string | null => {
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
   return params.get("plan");
 };
+
+export const tokenFromScannedValue = (value: string): string => {
+  const trimmed = value.trim();
+  if (trimmed.startsWith(`${FORMAT}.`)) return trimmed;
+  const direct = tokenFromHash(trimmed);
+  if (direct) return direct;
+  try {
+    const token = tokenFromHash(new URL(trimmed).hash);
+    if (token) return token;
+  } catch {
+    // URLでない値は、下の共通エラーへまとめる。
+  }
+  throw new Error("LoadPilotの共有プランQRではありません。");
+};
