@@ -41,7 +41,10 @@ export interface PackingListItem {
   position: number;
   piece: Piece;
   placedZCm: number;
+  notableMetrics: NotablePackingMetric[];
 }
+
+export type NotablePackingMetric = "length" | "width" | "height" | "weight" | "volume";
 
 export interface ContainerPackingList {
   containerKey: string;
@@ -52,11 +55,32 @@ export interface ContainerPackingList {
   items: PackingListItem[];
 }
 
-export const buildContainerPackingLists = (result: PlanResult): ContainerPackingList[] => result.loads.map((load) => ({
-  containerKey: containerKey(load.spec.type, load.index),
-  containerLabel: containerLabel(load),
-  pieceCount: load.placements.length,
-  totalWeightKg: load.placements.reduce((sum, placement) => sum + placement.piece.weight_kg, 0),
-  totalM3: load.placements.reduce((sum, placement) => sum + placement.piece.m3, 0),
-  items: load.placements.map((placement, index) => ({ position: index + 1, piece: placement.piece, placedZCm: placement.placed_z_cm })),
-}));
+const notableIndices = (values: number[]): Set<number> => {
+  if (!values.length) return new Set();
+  const maximum = Math.max(...values);
+  if (values.length > 1 && values.every((value) => value === maximum)) return new Set();
+  return new Set(values.flatMap((value, index) => value === maximum ? [index] : []));
+};
+
+export const buildContainerPackingLists = (result: PlanResult): ContainerPackingList[] => result.loads.map((load) => {
+  const metrics: Array<[NotablePackingMetric, Set<number>]> = [
+    ["length", notableIndices(load.placements.map((placement) => placement.piece.L_cm))],
+    ["width", notableIndices(load.placements.map((placement) => placement.piece.W_cm))],
+    ["height", notableIndices(load.placements.map((placement) => placement.piece.H_cm))],
+    ["weight", notableIndices(load.placements.map((placement) => placement.piece.weight_kg))],
+    ["volume", notableIndices(load.placements.map((placement) => placement.piece.m3))],
+  ];
+  return {
+    containerKey: containerKey(load.spec.type, load.index),
+    containerLabel: containerLabel(load),
+    pieceCount: load.placements.length,
+    totalWeightKg: load.placements.reduce((sum, placement) => sum + placement.piece.weight_kg, 0),
+    totalM3: load.placements.reduce((sum, placement) => sum + placement.piece.m3, 0),
+    items: load.placements.map((placement, index) => ({
+      position: index + 1,
+      piece: placement.piece,
+      placedZCm: placement.placed_z_cm,
+      notableMetrics: metrics.filter(([, indices]) => indices.has(index)).map(([metric]) => metric),
+    })),
+  };
+});
