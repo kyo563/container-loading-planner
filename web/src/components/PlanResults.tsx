@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { exportExcelReport, exportPlacementsCsv, printPlan } from "../domain/export";
 import { oogDisplayMetrics } from "../domain/oogDisplay";
-import { createPlanQrData } from "../domain/planQr";
+import { createPlanQrData, PRINT_QR_PX } from "../domain/planQr";
 import { containerKey } from "../domain/planner";
 import { buildContainerKpis, buildContainerPackingLists, containerLabel, summarizeCounts } from "../domain/reporting";
 import { fmt, fmtInt } from "../domain/rounding";
@@ -43,7 +43,7 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
     let cancelled = false;
     setPrintQrDataUrl("");
     setPrintQrError(false);
-    void createPlanQrData(sharePlan, 240).then((qr) => {
+    void createPlanQrData(sharePlan, PRINT_QR_PX).then((qr) => {
       if (!cancelled) setPrintQrDataUrl(qr.dataUrl);
     }).catch(() => {
       if (!cancelled) setPrintQrError(true);
