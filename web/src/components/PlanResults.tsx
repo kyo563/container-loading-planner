@@ -5,6 +5,7 @@ import { exportExcelReport, exportPlacementsCsv, printPlan } from "../domain/exp
 import { oogDisplayMetrics } from "../domain/oogDisplay";
 import { createPlanQrBundleData, PRINT_QR_PX } from "../domain/planQr";
 import { containerKey } from "../domain/planner";
+import { assessJapanRoadTransport } from "../domain/roadTransport";
 import { buildContainerKpis, buildContainerPackingLists, containerLabel, summarizeCounts } from "../domain/reporting";
 import { fmt, fmtInt } from "../domain/rounding";
 import type { ShareablePlanState } from "../domain/sharedPlan";
@@ -20,6 +21,7 @@ interface PlanResultsProps {
 export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const kpis = useMemo(() => buildContainerKpis(result), [result]);
   const packingLists = useMemo(() => buildContainerPackingLists(result), [result]);
+  const roadAssessments = useMemo(() => new Map(result.loads.map((load) => [containerKey(load.spec.type, load.index), assessJapanRoadTransport(load)])), [result]);
   const counts = useMemo(() => summarizeCounts(result), [result]);
   const [selectedKey, setSelectedKey] = useState(() => result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
   const [exportError, setExportError] = useState("");
@@ -236,9 +238,12 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
             <button type="button" className={containerReportView === "packing" ? "active" : ""} onClick={() => setContainerReportView("packing")}>パッキングリスト</button>
           </div>
         </div>
-        <div className={containerReportView === "summary" ? "container-report-summary" : "container-report-summary report-view-hidden"}><div className="table-shell"><table className="data-table result-table"><thead><tr><th>コンテナ</th><th>pcs</th><th>F/T</th><th>M³</th><th>貨物重量</th><th>Payload</th><th>容積</th><th>監査</th></tr></thead><tbody>
-          {kpis.map((kpi) => <tr key={kpi.container_key}><td><strong>{kpi.container_label}</strong></td><td>{kpi.piece_count}</td><td>{fmt(kpi.total_ft, 3)}</td><td>{fmt(kpi.total_m3, 3)}</td><td>{fmtInt(kpi.total_gross_kg)} kg</td><td>{fmt(kpi.payload_ratio_pct, 1)}%</td><td>{fmt(kpi.volume_ratio_pct, 1)}%</td><td>{kpi.bias_warn || kpi.weight_alert ? <span className="status-chip red">要確認</span> : <span className="status-chip green">範囲内</span>}</td></tr>)}
-        </tbody><tfoot><tr><td><strong>積載済み総計</strong></td><td><strong>{loadedTotals.pieces}</strong></td><td><strong>{fmt(loadedTotals.ft, 3)}</strong></td><td><strong>{fmt(loadedTotals.m3, 3)}</strong></td><td><strong>{fmtInt(loadedTotals.weight)} kg</strong></td><td>—</td><td>—</td><td>—</td></tr></tfoot></table></div></div>
+        <div className={containerReportView === "summary" ? "container-report-summary" : "container-report-summary report-view-hidden"}><div className="table-shell"><table className="data-table result-table"><thead><tr><th>コンテナ</th><th>pcs</th><th>F/T</th><th>M³</th><th>貨物重量</th><th>平均床荷重</th><th>Payload</th><th>容積</th><th>国内陸送・法令確認</th><th>監査</th></tr></thead><tbody>
+          {kpis.map((kpi) => {
+            const road = roadAssessments.get(kpi.container_key);
+            return <tr key={kpi.container_key}><td><strong>{kpi.container_label}</strong></td><td>{kpi.piece_count}</td><td>{fmt(kpi.total_ft, 3)}</td><td>{fmt(kpi.total_m3, 3)}</td><td>{fmtInt(kpi.total_gross_kg)} kg</td><td>{fmtInt(road?.averageFloorLoadKgM2 ?? 0)} kg/m²<small className="cell-note">貨物重量÷内寸床面積</small></td><td>{fmt(kpi.payload_ratio_pct, 1)}%</td><td>{fmt(kpi.volume_ratio_pct, 1)}%</td><td className="transport-check-cell"><strong>{road?.chassisMessage}</strong>{road?.specialPermitMessage && <small>{road.specialPermitMessage}</small>}{road?.escortMessage && <small>{road.escortMessage}</small>}</td><td>{kpi.bias_warn || kpi.weight_alert || Boolean(road?.specialPermitMessage) ? <span className="status-chip red">要確認</span> : <span className="status-chip green">範囲内</span>}</td></tr>;
+          })}
+        </tbody><tfoot><tr><td><strong>積載済み総計</strong></td><td><strong>{loadedTotals.pieces}</strong></td><td><strong>{fmt(loadedTotals.ft, 3)}</strong></td><td><strong>{fmt(loadedTotals.m3, 3)}</strong></td><td><strong>{fmtInt(loadedTotals.weight)} kg</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr></tfoot></table></div></div>
         <div className={containerReportView === "packing" ? "packing-list-view" : "packing-list-view report-view-hidden"}>
           <div className="packing-list-tools no-print"><span>コンテナを開くと個別明細を確認できます。</span><button type="button" onClick={() => setExpandedPackingLists(expandedPackingLists.size === packingLists.length ? new Set() : new Set(packingLists.map((list) => list.containerKey)))}>{expandedPackingLists.size === packingLists.length ? "すべて閉じる" : "すべて展開"}</button></div>
           {packingLists.map((list) => {
@@ -282,7 +287,7 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
           </tbody></table></div>
         </details>
       )}
-      <p className="result-disclaimer">本結果は初期検討用です。床面に余裕がある間は平置きを優先しますが、残る隙間にはダンネージ・ブロッキング・ラッシング等の移動防止措置が必要です。実入手可能なコンテナ仕様、床荷重、積付け作業性、道路法令、船社・ターミナル条件を別途確認してください。</p>
+      <p className="result-disclaimer">本結果は初期検討用です。国内陸送判定はコンテナ総重量（貨物＋コンテナ風袋）と貨物外形による注意喚起であり、シャーシ車検証、軸重・輪荷重、実車全高、通行経路、特殊車両通行許可・確認制度の回答書を必ず確認してください。誘導車の要否は許可経路に付されるC・D条件で確定します。床面に余裕がある間は平置きを優先しますが、残る隙間には移動防止措置が必要です。</p>
     </section>
   );
 }
