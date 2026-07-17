@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { exportExcelReport, exportPlacementsCsv, printPlan } from "../domain/export";
 import { oogDisplayMetrics } from "../domain/oogDisplay";
-import { createPlanQrData, PRINT_QR_PX } from "../domain/planQr";
+import { createPlanQrBundleData, PRINT_QR_PX } from "../domain/planQr";
 import { containerKey } from "../domain/planner";
 import { buildContainerKpis, buildContainerPackingLists, containerLabel, summarizeCounts } from "../domain/reporting";
 import { fmt, fmtInt } from "../domain/rounding";
@@ -24,6 +24,8 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const [selectedKey, setSelectedKey] = useState(() => result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
   const [exportError, setExportError] = useState("");
   const [printQrDataUrl, setPrintQrDataUrl] = useState("");
+  const [printSpecsQrDataUrl, setPrintSpecsQrDataUrl] = useState("");
+  const [printBundleId, setPrintBundleId] = useState("");
   const [printQrError, setPrintQrError] = useState(false);
   const [containerReportView, setContainerReportView] = useState<"summary" | "packing">("summary");
   const [expandedPackingLists, setExpandedPackingLists] = useState<Set<string>>(() => new Set(packingLists[0] ? [packingLists[0].containerKey] : []));
@@ -42,9 +44,15 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   useEffect(() => {
     let cancelled = false;
     setPrintQrDataUrl("");
+    setPrintSpecsQrDataUrl("");
+    setPrintBundleId("");
     setPrintQrError(false);
-    void createPlanQrData(sharePlan, PRINT_QR_PX).then((qr) => {
-      if (!cancelled) setPrintQrDataUrl(qr.dataUrl);
+    void createPlanQrBundleData(sharePlan, PRINT_QR_PX).then((qr) => {
+      if (!cancelled) {
+        setPrintQrDataUrl(qr.plan.dataUrl);
+        setPrintSpecsQrDataUrl(qr.specs?.dataUrl ?? "");
+        setPrintBundleId(qr.bundleId ?? "");
+      }
     }).catch(() => {
       if (!cancelled) setPrintQrError(true);
     });
@@ -89,8 +97,11 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   return (
     <section className="results-section" id="plan-results">
       <div className="print-report-header print-only">
-        <div><h1>Container Loading Plan</h1><p>LoadPilot / {new Date().toLocaleString("ja-JP")}</p><small>QRを読み取ると、貨物情報・計算条件を復元して再編集できます。</small></div>
-        {printQrDataUrl && <img src={printQrDataUrl} alt="積載プラン復元用QRコード" />}
+        <div><h1>Container Loading Plan</h1><p>LoadPilot / {new Date().toLocaleString("ja-JP")}</p><small>{printSpecsQrDataUrl ? `2枚のQRを続けて読み取ってください（照合ID: ${printBundleId}）` : "QRを読み取ると、貨物情報・計算条件を復元して再編集できます。"}</small></div>
+        <div className="print-qr-group">
+          {printQrDataUrl && <figure><img src={printQrDataUrl} alt="積載プラン復元用QRコード" /><figcaption>{printSpecsQrDataUrl ? "プラン 1/2" : "プラン復元QR"}</figcaption></figure>}
+          {printSpecsQrDataUrl && <figure><img src={printSpecsQrDataUrl} alt="特殊コンテナ仕様QRコード" /><figcaption>特殊仕様 2/2</figcaption></figure>}
+        </div>
         {printQrError && <span className="print-qr-error">データ量超過のためQRを掲載できません</span>}
       </div>
       <div className="results-heading">

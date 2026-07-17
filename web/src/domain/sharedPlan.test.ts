@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import QRCode from "qrcode";
 
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, SAMPLE_CARGO } from "./constants";
-import { decodeSharedPlan, encodeSharedPlan, tokenFromHash, tokenFromScannedValue } from "./sharedPlan";
+import { buildSharedQrBundle, decodeSharedPlan, encodeSharedPlan, SupplementalQrRequiredError, tokenFromHash, tokenFromScannedValue } from "./sharedPlan";
 
 const state = {
   rows: SAMPLE_CARGO,
@@ -42,9 +42,35 @@ describe("sharedPlan", () => {
   });
 
   it("標準サンプルを1個のQRコードへ格納できる", async () => {
-    const token = await encodeSharedPlan(state);
+    const bundle = await buildSharedQrBundle(state, "https://example.com/app/");
+    const token = bundle.planToken;
+    expect(bundle.specsToken).toBeUndefined();
+    expect(token.startsWith("lp2.")).toBe(true);
     const url = `https://example.com/container-loading-planner/#plan=${token}`;
     expect(() => QRCode.create(url, { errorCorrectionLevel: "L" })).not.toThrow();
+  });
+
+  it("標準仕様は共有データから省略し、復元時に標準値を適用する", async () => {
+    const token = await encodeSharedPlan(state);
+    expect(token.startsWith("lp2.")).toBe(true);
+    expect((await decodeSharedPlan(token)).specs).toEqual(DEFAULT_CONTAINERS);
+  });
+
+  it("標準外仕様は照合ID付きの2枚へ分離して復元する", async () => {
+    const customSpecs = DEFAULT_CONTAINERS.map((spec) => spec.type === "40HC" ? { ...spec, inner_H_cm: 275 } : { ...spec });
+    const bundle = await buildSharedQrBundle({ ...state, specs: customSpecs }, "https://example.com/app/");
+    expect(bundle.planToken.startsWith("lp2.")).toBe(true);
+    expect(bundle.specsToken?.startsWith("lps1.")).toBe(true);
+    await expect(decodeSharedPlan(bundle.planToken)).rejects.toBeInstanceOf(SupplementalQrRequiredError);
+    expect((await decodeSharedPlan(bundle.planToken, bundle.specsToken)).specs).toEqual(customSpecs);
+  });
+
+  it("異なる案件の特殊仕様QRを拒否する", async () => {
+    const firstSpecs = DEFAULT_CONTAINERS.map((spec) => spec.type === "40HC" ? { ...spec, inner_H_cm: 275 } : { ...spec });
+    const secondSpecs = DEFAULT_CONTAINERS.map((spec) => spec.type === "40HC" ? { ...spec, inner_H_cm: 280 } : { ...spec });
+    const first = await buildSharedQrBundle({ ...state, specs: firstSpecs });
+    const second = await buildSharedQrBundle({ ...state, specs: secondSpecs });
+    await expect(decodeSharedPlan(first.planToken, second.specsToken)).rejects.toThrow(/照合ID/u);
   });
 
   it("業務上不正な貨物値を共有前に拒否する", async () => {
