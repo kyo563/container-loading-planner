@@ -31,6 +31,7 @@ function PlannerPage({
   settings,
   setSettings,
   restoreRevision,
+  resetRevision,
   restoreMessage,
 }: {
   rows: CargoRow[];
@@ -45,6 +46,7 @@ function PlannerPage({
   settings: PlanningSettings;
   setSettings: (value: PlanningSettings) => void;
   restoreRevision: number;
+  resetRevision: number;
   restoreMessage: string;
 }) {
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
@@ -52,6 +54,7 @@ function PlannerPage({
   const [result, setResult] = useState<PlanResult | null>(null);
   const [calculating, setCalculating] = useState(false);
   const handledRestoreRevision = useRef(0);
+  const handledResetRevision = useRef(0);
 
   const invalidateResult = () => {
     setResult(null);
@@ -109,6 +112,16 @@ function PlannerPage({
     calculate();
   }, [restoreRevision]);
 
+  useEffect(() => {
+    if (!resetRevision || handledResetRevision.current === resetRevision) return;
+    handledResetRevision.current = resetRevision;
+    setIssues([]);
+    setError("");
+    setResult(null);
+    setCalculating(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [resetRevision]);
+
   return (
     <main>
       <section className="planner-hero no-print">
@@ -165,10 +178,27 @@ export default function App() {
   const [counts, setCounts] = useState<Record<string, number>>({ ...DEFAULT_COUNTS });
   const [settings, setSettings] = useState<PlanningSettings>({ ...DEFAULT_SETTINGS });
   const [restoreRevision, setRestoreRevision] = useState(0);
+  const [resetRevision, setResetRevision] = useState(0);
   const [restoreMessage, setRestoreMessage] = useState("");
   const [restoreError, setRestoreError] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
   const restoreStarted = useRef(false);
+
+  const startNewPlan = () => {
+    if (!window.confirm("現在の貨物情報と計算結果をすべて消去し、新しいプランを作成しますか？")) return;
+    setRows([]);
+    setIsSample(false);
+    setSpecs(DEFAULT_CONTAINERS.map((spec) => ({ ...spec })));
+    setMode("estimate");
+    setCounts({ ...DEFAULT_COUNTS });
+    setSettings({ ...DEFAULT_SETTINGS });
+    setView("planner");
+    setRestoreMessage("");
+    setRestoreError("");
+    setScannerOpen(false);
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    setResetRevision((current) => current + 1);
+  };
 
   const restoreSharedPlan = useCallback(async (token: string): Promise<void> => {
     const shared = await decodeSharedPlan(token);
@@ -197,10 +227,10 @@ export default function App() {
 
   return (
     <div className="app">
-      <Header current={view} onNavigate={setView} onScanPlan={() => setScannerOpen(true)} />
+      <Header current={view} onNavigate={setView} onScanPlan={() => setScannerOpen(true)} onNewPlan={startNewPlan} />
       <PlanQrScanner open={scannerOpen} onClose={() => setScannerOpen(false)} onToken={restoreSharedPlan} />
       {restoreError && <div className="restore-error" role="alert"><strong>共有プランを読み込めません</strong><p>{restoreError}</p></div>}
-      {view === "planner" && <PlannerPage rows={rows} setRows={setRows} isSample={isSample} setIsSample={setIsSample} specs={specs} mode={mode} setMode={setMode} counts={counts} setCounts={setCounts} settings={settings} setSettings={setSettings} restoreRevision={restoreRevision} restoreMessage={restoreMessage} />}
+      {view === "planner" && <PlannerPage rows={rows} setRows={setRows} isSample={isSample} setIsSample={setIsSample} specs={specs} mode={mode} setMode={setMode} counts={counts} setCounts={setCounts} settings={settings} setSettings={setSettings} restoreRevision={restoreRevision} resetRevision={resetRevision} restoreMessage={restoreMessage} />}
       {view === "converter" && <VolumeConverter />}
       {view === "containers" && <ContainerEditor specs={specs} onChange={setSpecs} />}
       {view === "guide" && <Guide />}
