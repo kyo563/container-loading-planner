@@ -7,7 +7,7 @@ import { tokenFromScannedValue } from "../domain/sharedPlan";
 interface PlanQrScannerProps {
   open: boolean;
   onClose: () => void;
-  onToken: (token: string) => Promise<void>;
+  onToken: (token: string) => Promise<{ complete: boolean; message?: string }>;
 }
 
 export function PlanQrScanner({ open, onClose, onToken }: PlanQrScannerProps) {
@@ -15,12 +15,14 @@ export function PlanQrScanner({ open, onClose, onToken }: PlanQrScannerProps) {
   const processingRef = useRef(false);
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
+  const [progressMessage, setProgressMessage] = useState("");
 
   useEffect(() => {
     if (!open || !videoRef.current) return;
     let disposed = false;
     setError("");
     setStarting(true);
+    setProgressMessage("");
     processingRef.current = false;
     const scanner = new QrScanner(videoRef.current, async (result) => {
       if (processingRef.current || disposed) return;
@@ -28,8 +30,13 @@ export function PlanQrScanner({ open, onClose, onToken }: PlanQrScannerProps) {
       await scanner.pause(true);
       try {
         const token = tokenFromScannedValue(result.data);
-        await onToken(token);
-        if (!disposed) onClose();
+        const outcome = await onToken(token);
+        if (!disposed && outcome.complete) onClose();
+        if (!disposed && !outcome.complete) {
+          setProgressMessage(outcome.message ?? "もう1枚のQRコードを読み取ってください。");
+          processingRef.current = false;
+          await scanner.start();
+        }
       } catch (caught) {
         if (!disposed) {
           setError(caught instanceof Error ? caught.message : "QRコードを読み込めませんでした。");
@@ -64,6 +71,7 @@ export function PlanQrScanner({ open, onClose, onToken }: PlanQrScannerProps) {
           <button className="icon-button" aria-label="QR読取画面を閉じる" onClick={onClose}><X size={18} /></button>
         </div>
         <p>印刷したCLPまたは別端末に表示したLoadPilotのQRコードを、枠内へ映してください。</p>
+        {progressMessage && <div className="scanner-progress" role="status">{progressMessage}</div>}
         <div className="scanner-video-wrap">
           <video ref={videoRef} muted playsInline />
           {starting && <div className="scanner-status"><span className="spinner dark" />カメラを起動中…</div>}

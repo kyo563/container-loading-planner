@@ -1,10 +1,13 @@
 import { strFromU8, strToU8, zlibSync, unzlibSync } from "fflate";
 
+import { DEFAULT_CONTAINERS } from "./constants";
 import type { CargoRow, ContainerSpec, PlanningSettings } from "./types";
 import { validateCargoRows } from "./input";
 import { assertValidContainerSpecs, assertValidPlanningSettings, assertValidRequestedCounts } from "./validation";
 
-const FORMAT = "lp1";
+const LEGACY_FORMAT = "lp1";
+const PLAN_FORMAT = "lp2";
+const SPECS_FORMAT = "lps1";
 const MAX_TOKEN_CHARS = 60_000;
 const MAX_ROWS = 1_000;
 const MAX_SPECS = 100;
@@ -19,6 +22,39 @@ export interface SharedPlanData {
   counts: Record<string, number>;
   settings: PlanningSettings;
   specs: ContainerSpec[];
+}
+
+interface SharedPlanDataV2 {
+  app: "loadpilot";
+  version: 2;
+  created_at: string;
+  rows: CargoRow[];
+  mode: "estimate" | "validate";
+  counts: Record<string, number>;
+  settings: PlanningSettings;
+  custom_specs_ref?: string;
+}
+
+interface SharedSpecsData {
+  app: "loadpilot-specs";
+  version: 1;
+  bundle_id: string;
+  specs: ContainerSpec[];
+}
+
+export interface SharedQrBundle {
+  planToken: string;
+  planUrl: string;
+  specsToken?: string;
+  specsUrl?: string;
+  bundleId?: string;
+}
+
+export class SupplementalQrRequiredError extends Error {
+  constructor(public readonly bundleId: string) {
+    super("このプランは標準外コンテナ仕様を使用しています。続けて「特殊コンテナ仕様QR 2/2」を読み取ってください。");
+    this.name = "SupplementalQrRequiredError";
+  }
 }
 
 export interface ShareablePlanState {
@@ -150,51 +186,126 @@ const sanitizePlan = (value: unknown): SharedPlanData => {
   return plan;
 };
 
-export const encodeSharedPlan = async (state: ShareablePlanState): Promise<string> => {
-  const data = sanitizePlan({ app: "loadpilot", version: 1, created_at: new Date().toISOString(), ...state });
+const sanitizePlanV2 = (value: unknown, specs: ContainerSpec[]): SharedPlanData => {
+  if (!isRecord(value) || value.app !== "loadpilot" || value.version !== 2) throw new Error("対応していない共有プランです。");
+  if (value.mode !== "estimate" && value.mode !== "validate") throw new Error("計算モードが正しくありません。");
+  const plan: SharedPlanData = {
+    app: "loadpilot",
+    version: 1,
+    created_at: textValue(value.created_at, "作成日時", 100),
+    rows: sanitizeRows(value.rows),
+    mode: value.mode,
+    counts: sanitizeCounts(value.counts),
+    settings: sanitizeSettings(value.settings),
+    specs,
+  };
+  const rowIssues = validateCargoRows(plan.rows);
+  if (rowIssues.length) throw new Error(`共有プランの貨物情報が不正です（${rowIssues[0].row}行目: ${rowIssues[0].message}）。`);
+  assertValidContainerSpecs(plan.specs);
+  assertValidPlanningSettings(plan.settings);
+  assertValidRequestedCounts(plan.counts, plan.specs);
+  return plan;
+};
+
+const sameSpecs = (left: ContainerSpec[], right: ContainerSpec[]): boolean => JSON.stringify(left) === JSON.stringify(right);
+
+const encodePayload = async (format: string, data: unknown): Promise<string> => {
   const compressed = zlibSync(strToU8(JSON.stringify(data)), { level: 9 });
-  const token = `${FORMAT}.${await checksum(compressed)}.${bytesToBase64Url(compressed)}`;
-  if (token.length > MAX_TOKEN_CHARS) throw new Error("共有URLが長すぎます。貨物行またはカスタムコンテナ仕様を減らしてください。");
+  const token = `${format}.${await checksum(compressed)}.${bytesToBase64Url(compressed)}`;
+  if (token.length > MAX_TOKEN_CHARS) throw new Error("共有データが長すぎます。貨物行を減らしてください。");
   return token;
 };
 
-export const decodeSharedPlan = async (token: string): Promise<SharedPlanData> => {
+const decodePayload = async (token: string, expectedFormat: string): Promise<unknown> => {
   if (token.length > MAX_TOKEN_CHARS) throw new Error("共有URLが長すぎます。");
   const [format, expectedChecksum, payload, ...rest] = token.split(".");
-  if (format !== FORMAT || !expectedChecksum || !payload || rest.length) throw new Error("共有URLの形式が正しくありません。");
+  if (format !== expectedFormat || !expectedChecksum || !payload || rest.length) throw new Error("共有URLの形式が正しくありません。");
   const compressed = base64UrlToBytes(payload);
   if (await checksum(compressed) !== expectedChecksum) throw new Error("共有データが破損または変更されています。");
   let decompressed: Uint8Array;
-  try {
-    decompressed = unzlibSync(compressed);
-  } catch {
-    throw new Error("共有データを展開できませんでした。");
-  }
+  try { decompressed = unzlibSync(compressed); } catch { throw new Error("共有データを展開できませんでした。"); }
   if (decompressed.byteLength > MAX_DECOMPRESSED_BYTES) throw new Error("共有データの展開後サイズが上限を超えています。");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(strFromU8(decompressed)) as unknown;
-  } catch {
-    throw new Error("共有データを読み取れませんでした。");
+  try { return JSON.parse(strFromU8(decompressed)) as unknown; } catch { throw new Error("共有データを読み取れませんでした。"); }
+};
+
+const decodeSpecsToken = async (token: string, expectedBundleId: string): Promise<ContainerSpec[]> => {
+  const parsed = await decodePayload(token, SPECS_FORMAT);
+  if (!isRecord(parsed) || parsed.app !== "loadpilot-specs" || parsed.version !== 1) throw new Error("特殊コンテナ仕様QRの形式が正しくありません。");
+  const bundleId = textValue(parsed.bundle_id, "照合ID", 40);
+  if (bundleId !== expectedBundleId) throw new Error("異なるプランの特殊コンテナ仕様QRです。照合IDが一致しません。");
+  const specs = sanitizeSpecs(parsed.specs);
+  assertValidContainerSpecs(specs);
+  return specs;
+};
+
+export const encodeSharedPlan = async (state: ShareablePlanState): Promise<string> => {
+  return (await buildSharedQrBundle(state)).planToken;
+};
+
+export const decodeSharedPlan = async (token: string, specsToken?: string): Promise<SharedPlanData> => {
+  if (token.startsWith(`${LEGACY_FORMAT}.`)) return sanitizePlan(await decodePayload(token, LEGACY_FORMAT));
+  const parsed = await decodePayload(token, PLAN_FORMAT);
+  if (!isRecord(parsed)) throw new Error("共有プランの形式が正しくありません。");
+  const customRef = parsed.custom_specs_ref === undefined ? undefined : textValue(parsed.custom_specs_ref, "照合ID", 40);
+  if (customRef && !specsToken) throw new SupplementalQrRequiredError(customRef);
+  const specs = customRef ? await decodeSpecsToken(specsToken!, customRef) : DEFAULT_CONTAINERS.map((spec) => ({ ...spec }));
+  return sanitizePlanV2(parsed, specs);
+};
+
+export const buildSharedQrBundle = async (state: ShareablePlanState, baseUrl?: string): Promise<SharedQrBundle> => {
+  const resolvedBaseUrl = baseUrl ?? (typeof window === "undefined" ? "https://loadpilot.invalid/" : window.location.href.split("#")[0]);
+  sanitizePlan({ app: "loadpilot", version: 1, created_at: new Date().toISOString(), ...state });
+  const custom = !sameSpecs(state.specs, DEFAULT_CONTAINERS);
+  let specsToken: string | undefined;
+  let bundleId: string | undefined;
+  if (custom) {
+    const specsCompressed = zlibSync(strToU8(JSON.stringify(state.specs)), { level: 9 });
+    bundleId = (await checksum(specsCompressed)).slice(0, 10);
+    const specsData: SharedSpecsData = { app: "loadpilot-specs", version: 1, bundle_id: bundleId, specs: state.specs };
+    specsToken = await encodePayload(SPECS_FORMAT, specsData);
   }
-  return sanitizePlan(parsed);
+  const planData: SharedPlanDataV2 = {
+    app: "loadpilot", version: 2, created_at: new Date().toISOString(), rows: state.rows,
+    mode: state.mode, counts: state.counts, settings: state.settings,
+    ...(bundleId ? { custom_specs_ref: bundleId } : {}),
+  };
+  const planToken = await encodePayload(PLAN_FORMAT, planData);
+  return {
+    planToken,
+    planUrl: `${resolvedBaseUrl}#plan=${planToken}`,
+    ...(specsToken ? { specsToken, specsUrl: `${resolvedBaseUrl}#spec=${specsToken}`, bundleId } : {}),
+  };
 };
 
 export const buildSharedPlanUrl = async (state: ShareablePlanState, baseUrl = window.location.href.split("#")[0]): Promise<string> =>
-  `${baseUrl}#plan=${await encodeSharedPlan(state)}`;
+  (await buildSharedQrBundle(state, baseUrl)).planUrl;
 
 export const tokenFromHash = (hash: string): string | null => {
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
   return params.get("plan");
 };
 
+export const specsTokenFromHash = (hash: string): string | null => {
+  const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
+  return params.get("spec");
+};
+
+export const sharedQrKind = (token: string): "plan" | "specs" => token.startsWith(`${SPECS_FORMAT}.`) ? "specs" : "plan";
+
+export const supplementalBundleId = async (specsToken: string): Promise<string> => {
+  const parsed = await decodePayload(specsToken, SPECS_FORMAT);
+  if (!isRecord(parsed) || parsed.app !== "loadpilot-specs" || parsed.version !== 1) throw new Error("特殊コンテナ仕様QRの形式が正しくありません。");
+  return textValue(parsed.bundle_id, "照合ID", 40);
+};
+
 export const tokenFromScannedValue = (value: string): string => {
   const trimmed = value.trim();
-  if (trimmed.startsWith(`${FORMAT}.`)) return trimmed;
-  const direct = tokenFromHash(trimmed);
+  if ([LEGACY_FORMAT, PLAN_FORMAT, SPECS_FORMAT].some((format) => trimmed.startsWith(`${format}.`))) return trimmed;
+  const direct = tokenFromHash(trimmed) ?? specsTokenFromHash(trimmed);
   if (direct) return direct;
   try {
-    const token = tokenFromHash(new URL(trimmed).hash);
+    const url = new URL(trimmed);
+    const token = tokenFromHash(url.hash) ?? specsTokenFromHash(url.hash);
     if (token) return token;
   } catch {
     // URLでない値は、下の共通エラーへまとめる。

@@ -12,7 +12,7 @@ import { VolumeConverter } from "./components/VolumeConverter";
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, SAMPLE_CARGO } from "./domain/constants";
 import { expandPieces, validateCargoRows } from "./domain/input";
 import { estimatePlan, validatePlan } from "./domain/planner";
-import { decodeSharedPlan, tokenFromHash } from "./domain/sharedPlan";
+import { decodeSharedPlan, sharedQrKind, specsTokenFromHash, supplementalBundleId, SupplementalQrRequiredError, tokenFromHash } from "./domain/sharedPlan";
 import type { AppView, CargoRow, ContainerSpec, PlanResult, PlanningSettings, ValidationIssue } from "./domain/types";
 
 const MAX_BROWSER_PIECES = 5_000;
@@ -183,6 +183,8 @@ export default function App() {
   const [restoreError, setRestoreError] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
   const restoreStarted = useRef(false);
+  const pendingPlan = useRef<{ token: string; bundleId: string } | null>(null);
+  const pendingSpecs = useRef(new Map<string, string>());
 
   const startNewPlan = () => {
     if (!window.confirm("現在の貨物情報と計算結果をすべて消去し、新しいプランを作成しますか？")) return;
@@ -196,12 +198,14 @@ export default function App() {
     setRestoreMessage("");
     setRestoreError("");
     setScannerOpen(false);
+    pendingPlan.current = null;
+    pendingSpecs.current.clear();
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     setResetRevision((current) => current + 1);
   };
 
-  const restoreSharedPlan = useCallback(async (token: string): Promise<void> => {
-    const shared = await decodeSharedPlan(token);
+  const applySharedPlan = useCallback(async (token: string, specsToken?: string): Promise<void> => {
+    const shared = await decodeSharedPlan(token, specsToken);
     setRows(shared.rows);
     setIsSample(false);
     setSpecs(shared.specs);
@@ -214,21 +218,59 @@ export default function App() {
     setRestoreRevision((current) => current + 1);
   }, []);
 
+  const consumeSharedQr = useCallback(async (token: string): Promise<{ complete: boolean; message?: string }> => {
+    setRestoreError("");
+    if (sharedQrKind(token) === "specs") {
+      const bundleId = await supplementalBundleId(token);
+      if (pendingPlan.current && pendingPlan.current.bundleId !== bundleId) {
+        throw new Error(`異なるプランの特殊コンテナ仕様QRです。必要な照合IDは${pendingPlan.current.bundleId}ですが、読み取ったQRは${bundleId}です。`);
+      }
+      pendingSpecs.current.set(bundleId, token);
+      if (pendingPlan.current?.bundleId === bundleId) {
+        await applySharedPlan(pendingPlan.current.token, token);
+        pendingPlan.current = null;
+        pendingSpecs.current.delete(bundleId);
+        return { complete: true };
+      }
+      return { complete: false, message: `特殊コンテナ仕様QRを受け付けました（照合ID: ${bundleId}）。続けてプランQRを読み取ってください。` };
+    }
+    try {
+      await applySharedPlan(token);
+      return { complete: true };
+    } catch (caught) {
+      if (!(caught instanceof SupplementalQrRequiredError)) throw caught;
+      const specsToken = pendingSpecs.current.get(caught.bundleId);
+      if (specsToken) {
+        await applySharedPlan(token, specsToken);
+        pendingSpecs.current.delete(caught.bundleId);
+        pendingPlan.current = null;
+        return { complete: true };
+      }
+      pendingPlan.current = { token, bundleId: caught.bundleId };
+      return { complete: false, message: `プランQRを受け付けました（照合ID: ${caught.bundleId}）。続けて特殊コンテナ仕様QRを読み取ってください。` };
+    }
+  }, [applySharedPlan]);
+
   useEffect(() => {
     if (restoreStarted.current) return;
     restoreStarted.current = true;
-    const token = tokenFromHash(window.location.hash);
+    const token = tokenFromHash(window.location.hash) ?? specsTokenFromHash(window.location.hash);
     if (!token) return;
-    void restoreSharedPlan(token).catch((caught: unknown) => {
+    void consumeSharedQr(token).then((outcome) => {
+      if (!outcome.complete) {
+        setRestoreMessage(outcome.message ?? "もう1枚のQRコードを読み取ってください。");
+        setScannerOpen(true);
+      }
+    }).catch((caught: unknown) => {
       setRestoreMessage("");
       setRestoreError(caught instanceof Error ? caught.message : "共有プランを読み込めませんでした。");
     });
-  }, [restoreSharedPlan]);
+  }, [consumeSharedQr]);
 
   return (
     <div className="app">
       <Header current={view} onNavigate={setView} onScanPlan={() => setScannerOpen(true)} onNewPlan={startNewPlan} />
-      <PlanQrScanner open={scannerOpen} onClose={() => setScannerOpen(false)} onToken={restoreSharedPlan} />
+      <PlanQrScanner open={scannerOpen} onClose={() => setScannerOpen(false)} onToken={consumeSharedQr} />
       {restoreError && <div className="restore-error" role="alert"><strong>共有プランを読み込めません</strong><p>{restoreError}</p></div>}
       {view === "planner" && <PlannerPage rows={rows} setRows={setRows} isSample={isSample} setIsSample={setIsSample} specs={specs} mode={mode} setMode={setMode} counts={counts} setCounts={setCounts} settings={settings} setSettings={setSettings} restoreRevision={restoreRevision} resetRevision={resetRevision} restoreMessage={restoreMessage} />}
       {view === "converter" && <VolumeConverter />}
