@@ -52,6 +52,8 @@ describe("estimatePlan", () => {
     expect(placement.placed_y_cm).toBe(-20);
     expect(metrics.owTotalCm).toBe(40);
     expect(metrics.owEachCm).toBe(20);
+    expect(metrics.owLeftCm).toBe(20);
+    expect(metrics.owRightCm).toBe(20);
   });
 
   it("OH貨物をOTの床面中央へ配置する", () => {
