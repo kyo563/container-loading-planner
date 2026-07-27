@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { exportExcelReport, exportPlacementsCsv, printPlan } from "../domain/export";
 import { oogDisplayMetrics } from "../domain/oogDisplay";
-import { createPlanQrBundleData, PRINT_QR_PX } from "../domain/planQr";
+import { createPlanQrBundleData, PRINT_QR_PX, type PlanQrData } from "../domain/planQr";
 import { containerKey } from "../domain/planner";
 import { assessJapanRoadTransport } from "../domain/roadTransport";
 import { buildContainerKpis, buildContainerPackingLists, containerLabel, summarizeCounts } from "../domain/reporting";
@@ -25,10 +25,13 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const counts = useMemo(() => summarizeCounts(result), [result]);
   const [selectedKey, setSelectedKey] = useState(() => result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
   const [exportError, setExportError] = useState("");
-  const [printQrDataUrl, setPrintQrDataUrl] = useState("");
-  const [printSpecsQrDataUrl, setPrintSpecsQrDataUrl] = useState("");
+  const [printPlanQrParts, setPrintPlanQrParts] = useState<PlanQrData[]>([]);
+  const [printSpecsQrParts, setPrintSpecsQrParts] = useState<PlanQrData[]>([]);
   const [printBundleId, setPrintBundleId] = useState("");
   const [printQrError, setPrintQrError] = useState(false);
+  const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
+  const [includePrintQr, setIncludePrintQr] = useState(true);
+  const [printInColor, setPrintInColor] = useState(false);
   const [containerReportView, setContainerReportView] = useState<"summary" | "packing">("summary");
   const [expandedPackingLists, setExpandedPackingLists] = useState<Set<string>>(() => new Set(packingLists[0] ? [packingLists[0].containerKey] : []));
   const runExport = async (action: () => void | Promise<void>): Promise<void> => {
@@ -45,14 +48,14 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   }, [result]);
   useEffect(() => {
     let cancelled = false;
-    setPrintQrDataUrl("");
-    setPrintSpecsQrDataUrl("");
+    setPrintPlanQrParts([]);
+    setPrintSpecsQrParts([]);
     setPrintBundleId("");
     setPrintQrError(false);
     void createPlanQrBundleData(sharePlan, PRINT_QR_PX).then((qr) => {
       if (!cancelled) {
-        setPrintQrDataUrl(qr.plan.dataUrl);
-        setPrintSpecsQrDataUrl(qr.specs?.dataUrl ?? "");
+        setPrintPlanQrParts(qr.planParts);
+        setPrintSpecsQrParts(qr.specsParts ?? []);
         setPrintBundleId(qr.bundleId ?? "");
       }
     }).catch(() => {
@@ -74,6 +77,21 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const totalWeight = [...result.placements.map((placement) => placement.piece), ...result.unplaced].reduce((sum, piece) => sum + piece.weight_kg, 0);
   const oogEntries = [...result.oog_results.entries()].filter(([, oog]) => oog.oog_flag || !oog.door_passable);
   const warningCount = kpis.filter((kpi) => kpi.bias_warn || kpi.weight_alert).length + result.unplaced.length;
+  const printQrParts = [...printPlanQrParts, ...printSpecsQrParts];
+  const printQrInstruction = printQrParts.length > 1
+    ? `${printQrParts.length}枚のQRをLoadPilotの「QR読込」で順不同に読み取ってください${printBundleId ? `（特殊仕様の照合ID: ${printBundleId}）` : ""}。`
+    : "QRを読み取ると、貨物情報・計算条件を復元して再編集できます。";
+  const printResultClassName = [
+    "results-section",
+    includePrintQr ? "print-with-qr" : "print-hide-qr",
+    printInColor ? "print-color" : "print-monochrome",
+  ].join(" ");
+  const openPrintPreview = (): void => {
+    setPrintOptionsOpen(false);
+    window.setTimeout(() => {
+      void runExport(printPlan);
+    }, 0);
+  };
   const loadedTotals = useMemo(() => kpis.reduce((totals, kpi) => ({
     pieces: totals.pieces + kpi.piece_count,
     ft: totals.ft + kpi.total_ft,
@@ -88,6 +106,10 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
       ohCm: oog?.over_H_cm ?? 0,
       owTotalCm: oog?.over_W_cm ?? 0,
       owEachCm: (oog?.over_W_cm ?? 0) / 2,
+      owLeftCm: (oog?.over_W_cm ?? 0) / 2,
+      owRightCm: (oog?.over_W_cm ?? 0) / 2,
+      referenceWidthCm: 0,
+      referenceHeightCm: 0,
     };
   };
   const dimensionHighlights = (metrics: string[]) => [
@@ -97,12 +119,15 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   ].filter(Boolean);
 
   return (
-    <section className="results-section" id="plan-results">
+    <section className={printResultClassName} id="plan-results">
       <div className="print-report-header print-only">
-        <div><h1>Container Loading Plan</h1><p>LoadPilot / {new Date().toLocaleString("ja-JP")}</p><small>{printSpecsQrDataUrl ? `2枚のQRを続けて読み取ってください（照合ID: ${printBundleId}）` : "QRを読み取ると、貨物情報・計算条件を復元して再編集できます。"}</small></div>
+        <div><h1>Container Loading Plan</h1><p>LoadPilot / {new Date().toLocaleString("ja-JP")}</p><small className="print-qr-instruction">{printQrInstruction}</small></div>
         <div className="print-qr-group">
-          {printQrDataUrl && <figure><img src={printQrDataUrl} alt="積載プラン復元用QRコード" /><figcaption>{printSpecsQrDataUrl ? "プラン 1/2" : "プラン復元QR"}</figcaption></figure>}
-          {printSpecsQrDataUrl && <figure><img src={printSpecsQrDataUrl} alt="特殊コンテナ仕様QRコード" /><figcaption>特殊仕様 2/2</figcaption></figure>}
+          {printQrParts.map((part) => {
+            const label = part.kind === "plan" ? "プラン" : "特殊仕様";
+            const caption = part.partTotal > 1 ? `${label} ${part.partIndex}/${part.partTotal}` : label;
+            return <figure key={`${part.kind}-${part.partIndex}`}><img src={part.dataUrl} alt={`${caption}復元用QRコード`} /><figcaption>{caption}</figcaption></figure>;
+          })}
         </div>
         {printQrError && <span className="print-qr-error">データ量超過のためQRを掲載できません</span>}
       </div>
@@ -116,7 +141,7 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
           <PlanShare plan={sharePlan} />
           <button className="button secondary" onClick={() => void runExport(() => exportPlacementsCsv(result))}><Download size={16} />CSV</button>
           <button className="button secondary" onClick={() => void runExport(() => exportExcelReport(result))}><FileSpreadsheet size={16} />Excel帳票</button>
-          <button className="button secondary" onClick={() => void runExport(printPlan)}><Printer size={16} />印刷 / PDF</button>
+          <button className="button secondary" onClick={() => setPrintOptionsOpen(true)}><Printer size={16} />印刷 / PDF</button>
         </div>
       </div>
       {exportError && <div className="global-error no-print" role="alert"><strong>帳票を出力できません</strong><p>{exportError}</p></div>}
@@ -168,12 +193,12 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
               <div><span className="eyebrow">TOP VIEW</span><h3>{containerLabel(selectedLoad)}</h3><p>{selectedLoad.spec.inner_L_cm} × {selectedLoad.spec.inner_W_cm} × {selectedLoad.spec.inner_H_cm} cm</p></div>
               <div className="detail-badges"><span>{selectedLoad.placements.length} PCS</span><span>{fmt(selectedKpi.total_m3, 2)} M³</span></div>
             </div>
-            <div className="layout-stage"><ContainerLayout load={selectedLoad} /></div>
+            <div className="layout-stage"><ContainerLayout load={selectedLoad} oogResults={result.oog_results} /></div>
             {selectedLoad.placements.some((placement) => result.oog_results.get(placement.piece.piece_id)?.oog_flag) && (
               <div className="layout-oog-summary">
                 {selectedLoad.placements.filter((placement) => result.oog_results.get(placement.piece.piece_id)?.oog_flag).map((placement) => {
                   const metrics = oogMetricsFor(placement.piece.piece_id);
-                  return <span key={placement.piece.piece_id}><strong>{placement.piece.piece_id}</strong> OH {fmt(metrics.ohCm, 1)} cm　OW total {fmt(metrics.owTotalCm, 1)} cm　each L/R {fmt(metrics.owEachCm, 1)} / {fmt(metrics.owEachCm, 1)} cm</span>;
+                  return <span key={placement.piece.piece_id}><strong>{placement.piece.piece_id}</strong>　OW合計 +{fmt(metrics.owTotalCm, 1)} cm（左 +{fmt(metrics.owLeftCm, 1)} / 右 +{fmt(metrics.owRightCm, 1)} cm、貨物幅 {fmt(placement.orient_W_cm, 1)} / 基準幅 {fmt(metrics.referenceWidthCm, 1)} cm）　OH +{fmt(metrics.ohCm, 1)} cm</span>;
                 })}
               </div>
             )}
@@ -213,10 +238,10 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
           return (
             <article key={key} className="print-layout-card">
               <div><h3>{containerLabel(load)}</h3><p>総個数: {load.placements.length} PCS　/　総重量: {fmtInt(kpi?.total_gross_kg ?? 0)} kg　/　総容積: {fmt(kpi?.total_m3 ?? 0, 3)} m³</p></div>
-              <ContainerLayout load={load} />
+              <ContainerLayout load={load} oogResults={result.oog_results} />
               {load.placements.filter((placement) => result.oog_results.get(placement.piece.piece_id)?.oog_flag).map((placement) => {
                 const metrics = oogMetricsFor(placement.piece.piece_id);
-                return <p key={placement.piece.piece_id}><strong>{placement.piece.piece_id}</strong>　OH {fmt(metrics.ohCm, 1)}cm ・ OW total {fmt(metrics.owTotalCm, 1)}cm ・ each L/R {fmt(metrics.owEachCm, 1)} / {fmt(metrics.owEachCm, 1)}cm</p>;
+                return <p key={placement.piece.piece_id}><strong>{placement.piece.piece_id}</strong>　OW合計 +{fmt(metrics.owTotalCm, 1)}cm（左 +{fmt(metrics.owLeftCm, 1)} / 右 +{fmt(metrics.owRightCm, 1)}cm）・ OH +{fmt(metrics.ohCm, 1)}cm</p>;
               })}
               <p>Payload {fmt(kpi?.payload_ratio_pct ?? 0, 1)}% ・ 重心偏差 X/Y {fmt(bias?.offset_x_pct ?? 0, 1)} / {fmt(bias?.offset_y_pct ?? 0, 1)}% ・ 総重量目安 {fmtInt(weight?.gross_weight_kg ?? 0)}kg</p>
             </article>
@@ -283,11 +308,50 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
         <details className="oog-details">
           <summary>OOG・入口通過判定 <span>{oogEntries.length}件</span></summary>
           <div className="table-shell"><table className="data-table result-table"><thead><tr><th>貨物ID</th><th>基準</th><th>OL</th><th>OW total</th><th>OW each L/R</th><th>OH</th><th>入口</th><th>候補</th></tr></thead><tbody>
-            {oogEntries.map(([pieceId, oog]) => { const metrics = oogMetricsFor(pieceId); return <tr key={pieceId}><td><strong>{pieceId}</strong></td><td>{oog.oog_ref_type}</td><td>{oog.over_L_cm} cm</td><td>{fmt(metrics.owTotalCm, 1)} cm</td><td>{fmt(metrics.owEachCm, 1)} / {fmt(metrics.owEachCm, 1)} cm</td><td>{fmt(metrics.ohCm, 1)} cm</td><td>{oog.door_passable ? "通過可" : oog.door_reason}</td><td>{oog.suggestion || "標準"}</td></tr>;})}
+            {oogEntries.map(([pieceId, oog]) => { const metrics = oogMetricsFor(pieceId); return <tr key={pieceId}><td><strong>{pieceId}</strong></td><td>{oog.oog_ref_type}</td><td>{oog.over_L_cm} cm</td><td>{fmt(metrics.owTotalCm, 1)} cm</td><td>{fmt(metrics.owLeftCm, 1)} / {fmt(metrics.owRightCm, 1)} cm</td><td>{fmt(metrics.ohCm, 1)} cm</td><td>{oog.door_passable ? "通過可" : oog.door_reason}</td><td>{oog.suggestion || "標準"}</td></tr>;})}
           </tbody></table></div>
         </details>
       )}
       <p className="result-disclaimer">本結果は初期検討用です。国内陸送判定はコンテナ総重量（貨物＋コンテナ風袋）と貨物外形による注意喚起であり、シャーシ車検証、軸重・輪荷重、実車全高、通行経路、特殊車両通行許可・確認制度の回答書を必ず確認してください。誘導車の要否は許可経路に付されるC・D条件で確定します。床面に余裕がある間は平置きを優先しますが、残る隙間には移動防止措置が必要です。</p>
+      {printOptionsOpen && (
+        <div
+          className="modal-backdrop no-print"
+          role="presentation"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setPrintOptionsOpen(false); }}
+        >
+          <section className="modal-card print-options-modal" role="dialog" aria-modal="true" aria-labelledby="print-options-title">
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow">PRINT OPTIONS</span>
+                <h3 id="print-options-title">印刷設定</h3>
+              </div>
+            </div>
+            <p>印刷プレビューを開く前に、帳票へ掲載する内容と色を選択できます。</p>
+            <div className="print-options-list">
+              <label className="print-option-row">
+                <input
+                  type="checkbox"
+                  checked={includePrintQr}
+                  onChange={(event) => setIncludePrintQr(event.target.checked)}
+                />
+                <span><strong>QRコードを掲載する</strong><small>モバイルでプランと特殊仕様を復元できます。</small></span>
+              </label>
+              <label className="print-option-row">
+                <input
+                  type="checkbox"
+                  checked={printInColor}
+                  onChange={(event) => setPrintInColor(event.target.checked)}
+                />
+                <span><strong>カラーで印刷する</strong><small>オフの場合はモノクロで印刷します（既定）。</small></span>
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button className="button ghost" type="button" onClick={() => setPrintOptionsOpen(false)}>キャンセル</button>
+              <button className="button primary" type="button" onClick={openPrintPreview}><Printer size={16} />印刷画面を開く</button>
+            </div>
+          </section>
+        </div>
+      )}
     </section>
   );
 }
