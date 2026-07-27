@@ -38,6 +38,16 @@ describe("sharedPlan", () => {
     expect(restored.settings).toEqual(DEFAULT_SETTINGS);
     expect(restored.specs).toEqual(DEFAULT_CONTAINERS);
     expect(token.length).toBeLessThan(JSON.stringify(state).length * 0.55);
+    const previousFormatToken = await encodeOldPayload("lp2", {
+      app: "loadpilot",
+      version: 2,
+      created_at: "2026-01-01T00:00:00.000Z",
+      rows: SAMPLE_CARGO,
+      mode: "estimate",
+      counts: { "40HC": 1 },
+      settings: DEFAULT_SETTINGS,
+    });
+    expect(token.length).toBeLessThan(previousFormatToken.length * 0.75);
   });
 
   it("変更・破損した共有データを拒否する", async () => {
