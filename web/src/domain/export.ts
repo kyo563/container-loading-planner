@@ -46,8 +46,8 @@ export const placementRows = (result: PlanResult): Record<string, unknown>[] =>
         oog_over_L_cm: oog?.over_L_cm ?? 0,
         oog_over_W_cm: oog?.over_W_cm ?? 0,
         oog_ow_total_cm: displayOog.owTotalCm,
-        oog_ow_each_left_cm: displayOog.owEachCm,
-        oog_ow_each_right_cm: displayOog.owEachCm,
+        oog_ow_each_left_cm: displayOog.owLeftCm,
+        oog_ow_each_right_cm: displayOog.owRightCm,
         oog_over_H_cm: oog?.over_H_cm ?? 0,
         door_passable: oog?.door_passable ?? true,
         special_container_reason: result.special_reason_by_piece.get(placement.piece.piece_id) ?? "",
@@ -119,7 +119,7 @@ export const exportExcelReport = async (result: PlanResult): Promise<void> => {
       貨物ID: placement.piece.piece_id,
       品名: safeCell(placement.piece.desc),
       配置指示: `x=${placement.placed_x_cm.toFixed(1)}cm, y=${placement.placed_y_cm.toFixed(1)}cm, z=${placement.placed_z_cm.toFixed(1)}cm`,
-      OOG寸法: oog?.oog_flag ? `OH ${displayOog.ohCm}cm / OW total ${displayOog.owTotalCm}cm / each ${displayOog.owEachCm}cm` : "—",
+      OOG寸法: oog?.oog_flag ? `OH ${displayOog.ohCm}cm / OW total ${displayOog.owTotalCm}cm / left ${displayOog.owLeftCm}cm / right ${displayOog.owRightCm}cm` : "—",
     });}),
   );
   const unplaced = result.unplaced.map((piece) => {
