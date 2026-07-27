@@ -39,7 +39,7 @@ describe("planQr", () => {
 
     const result = await new PlanQrPartCollector().acceptScannedValue(bundle.plan.url);
     expect(result.complete).toBe(true);
-    expect(result.token?.startsWith("lp2.")).toBe(true);
+    expect(result.token?.startsWith("lp3.")).toBe(true);
   });
 
   it("高密度になるプランを上限以下の複数QRへ自動分割して復元する", async () => {
@@ -55,7 +55,8 @@ describe("planQr", () => {
       const result = await collector.acceptScannedValue(part.url);
       if (result.complete) token = result.token ?? "";
     }
-    expect((await decodeSharedPlan(token)).rows).toEqual(denseRows);
+    expect((await decodeSharedPlan(token)).rows.map(({ uid: _uid, ...row }) => row))
+      .toEqual(denseRows.map(({ uid: _uid, ...row }) => row));
   });
 
   it("読取済みの分割QRは重複として無視する", async () => {
@@ -86,7 +87,7 @@ describe("planQr", () => {
       const result = await collector.acceptScannedValue(part.url);
       if (result.complete) specsToken = result.token ?? "";
     }
-    expect(specsToken.startsWith("lps1.")).toBe(true);
+    expect(specsToken.startsWith("lps2.")).toBe(true);
   });
 
   it("一部が変更された分割QRを復元時に拒否する", async () => {
