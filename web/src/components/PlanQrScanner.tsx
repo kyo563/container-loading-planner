@@ -19,7 +19,7 @@ export function PlanQrScanner({ open, onClose, onToken }: PlanQrScannerProps) {
   const [progressMessage, setProgressMessage] = useState("");
 
   const partProgressMessage = (result: PlanQrScanResult): string => {
-    const label = result.kind === "plan" ? "プランQR" : "特殊仕様QR";
+    const label = result.kind === "plan" ? "プランQR" : "カスタム仕様QR";
     const remaining = result.total - result.received;
     if (result.duplicate) return `${label} ${result.partIndex}/${result.total} は読取済みです。残り${remaining}枚です。`;
     return `${label}を${result.received}/${result.total}枚受け付けました。残り${remaining}枚です。`;

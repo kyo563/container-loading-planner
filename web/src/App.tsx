@@ -223,7 +223,7 @@ export default function App() {
     if (sharedQrKind(token) === "specs") {
       const bundleId = await supplementalBundleId(token);
       if (pendingPlan.current && pendingPlan.current.bundleId !== bundleId) {
-        throw new Error(`異なるプランの特殊コンテナ仕様QRです。必要な照合IDは${pendingPlan.current.bundleId}ですが、読み取ったQRは${bundleId}です。`);
+        throw new Error(`異なるプランのカスタムコンテナ仕様QRです。必要な照合IDは${pendingPlan.current.bundleId}ですが、読み取ったQRは${bundleId}です。`);
       }
       pendingSpecs.current.set(bundleId, token);
       if (pendingPlan.current?.bundleId === bundleId) {
@@ -232,7 +232,7 @@ export default function App() {
         pendingSpecs.current.delete(bundleId);
         return { complete: true };
       }
-      return { complete: false, message: `特殊コンテナ仕様QRを受け付けました（照合ID: ${bundleId}）。続けてプランQRを読み取ってください。` };
+      return { complete: false, message: `カスタムコンテナ仕様QRを受け付けました（照合ID: ${bundleId}）。続けてプランQRを読み取ってください。` };
     }
     try {
       await applySharedPlan(token);
@@ -247,7 +247,7 @@ export default function App() {
         return { complete: true };
       }
       pendingPlan.current = { token, bundleId: caught.bundleId };
-      return { complete: false, message: `プランQRを受け付けました（照合ID: ${caught.bundleId}）。続けて特殊コンテナ仕様QRを読み取ってください。` };
+      return { complete: false, message: `プランQRを受け付けました（照合ID: ${caught.bundleId}）。続けてカスタムコンテナ仕様QRを読み取ってください。` };
     }
   }, [applySharedPlan]);
 

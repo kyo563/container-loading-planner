@@ -18,6 +18,7 @@ export interface PlanQrBundleData {
   plan: PlanQrData;
   planParts: PlanQrData[];
   planUrl: string;
+  profileId: string;
   specs?: PlanQrData;
   specsParts?: PlanQrData[];
   bundleId?: string;
@@ -148,6 +149,7 @@ export const createPlanQrBundleData = async (
     plan: planParts[0],
     planParts,
     planUrl: bundle.planUrl,
+    profileId: bundle.profileId,
     ...(specsParts ? { specs: specsParts[0], specsParts, bundleId: bundle.bundleId } : {}),
     requiresAppScanner: [...planParts, ...(specsParts ?? [])].some((part) => part.isChunkPart),
   };
