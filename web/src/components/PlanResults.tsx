@@ -79,7 +79,7 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const warningCount = kpis.filter((kpi) => kpi.bias_warn || kpi.weight_alert).length + result.unplaced.length;
   const printQrParts = [...printPlanQrParts, ...printSpecsQrParts];
   const printQrInstruction = printQrParts.length > 1
-    ? `${printQrParts.length}枚のQRをLoadPilotの「QR読込」で順不同に読み取ってください${printBundleId ? `（特殊仕様の照合ID: ${printBundleId}）` : ""}。`
+    ? `${printQrParts.length}枚のQRをLoadPilotの「QR読込」で順不同に読み取ってください${printBundleId ? `（カスタム仕様の照合ID: ${printBundleId}）` : ""}。`
     : "QRを読み取ると、貨物情報・計算条件を復元して再編集できます。";
   const printResultClassName = [
     "results-section",
