@@ -26,6 +26,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify source files are complete
+        run: |
+          if grep -RFn 'tokens truncated' src; then
+            echo 'Truncated source content was detected.' >&2
+            exit 1
+          fi
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
