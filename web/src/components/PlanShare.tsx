@@ -1,6 +1,10 @@
 import { Check, Copy, Download, Link2, QrCode, Share2, X } from "lucide-react";
 import { useState } from "react";
 
+import {
+  STANDARD_CONTAINER_PROFILE_ID,
+  STANDARD_CONTAINER_PROFILE_LABEL,
+} from "../domain/containerProfiles";
 import { createPlanQrBundleData, type PlanQrData } from "../domain/planQr";
 import { buildSharedPlanUrl, type ShareablePlanState } from "../domain/sharedPlan";
 
@@ -9,7 +13,7 @@ interface PlanShareProps {
 }
 
 const qrLabel = (part: PlanQrData): string => {
-  const label = part.kind === "plan" ? "プランQR" : "特殊コンテナ仕様QR";
+  const label = part.kind === "plan" ? "プランQR" : "カスタムコンテナ仕様QR";
   return part.partTotal > 1 ? `${label} ${part.partIndex}/${part.partTotal}` : label;
 };
 
@@ -26,6 +30,7 @@ export function PlanShare({ plan }: PlanShareProps) {
   const [planQrParts, setPlanQrParts] = useState<PlanQrData[]>([]);
   const [specsQrParts, setSpecsQrParts] = useState<PlanQrData[]>([]);
   const [bundleId, setBundleId] = useState("");
+  const [profileId, setProfileId] = useState("");
   const [requiresAppScanner, setRequiresAppScanner] = useState(false);
   const [error, setError] = useState("");
   const [qrError, setQrError] = useState("");
@@ -38,6 +43,7 @@ export function PlanShare({ plan }: PlanShareProps) {
     setPlanQrParts([]);
     setSpecsQrParts([]);
     setBundleId("");
+    setProfileId("");
     setRequiresAppScanner(false);
     setError("");
     setQrError("");
@@ -49,6 +55,7 @@ export function PlanShare({ plan }: PlanShareProps) {
         setPlanQrParts(qr.planParts);
         setSpecsQrParts(qr.specsParts ?? []);
         setBundleId(qr.bundleId ?? "");
+        setProfileId(qr.profileId);
         setRequiresAppScanner(qr.requiresAppScanner);
       } catch (caught) {
         const nextUrl = await buildSharedPlanUrl(plan);
@@ -79,8 +86,9 @@ export function PlanShare({ plan }: PlanShareProps) {
   const readHelp = requiresAppScanner
     ? `LoadPilot画面上部の「QR読込」で${totalQrParts}枚すべてを読み取ってください。順番は問いません。読取済みのQRは重複しても無視されます。`
     : specsQrParts.length
-      ? "プランQRと特殊コンテナ仕様QRを続けて読み取ります。順番は問いませんが、両方の照合IDが一致するまで復元されません。"
+      ? "プランQRとカスタムコンテナ仕様QRを続けて読み取ります。順番は問いませんが、両方の照合IDが一致するまで復元されません。"
       : "スマートフォン等でQRを読み取るか、共有URLを開いてください。標準コンテナ仕様で自動的に積載計算を実行します。";
+  const profileLabel = profileId === STANDARD_CONTAINER_PROFILE_ID ? STANDARD_CONTAINER_PROFILE_LABEL : profileId;
 
   return (
     <>
@@ -92,7 +100,7 @@ export function PlanShare({ plan }: PlanShareProps) {
               <div><span className="eyebrow">SHARE PLAN</span><h3 id="share-plan-title">プランをQR・URLで共有</h3></div>
               <button className="icon-button" aria-label="共有画面を閉じる" onClick={() => setOpen(false)}><X size={18} /></button>
             </div>
-            <p>QRが細かくなりすぎる場合は、読み取りやすい密度になるよう自動で複数枚へ分割します。標準外コンテナ仕様も、プランとは別のQRとして安全に照合します。</p>
+            <p>通常は標準コンテナ定義IDだけを保存してQRを軽くします。SOC・寸法変更などの差分がある場合だけ、カスタムコンテナ仕様QRを追加します。</p>
 
             {generating && <div className="share-loading"><span className="spinner dark" /><strong>共有データを作成中…</strong></div>}
             {error && <div className="share-message error" role="alert">{error}</div>}
@@ -113,7 +121,7 @@ export function PlanShare({ plan }: PlanShareProps) {
                       </a>
                     </div>
                   )) : <div className="qr-placeholder"><QrCode /><span>QR生成不可</span></div>}
-                  {bundleId && <small className="qr-bundle-id">特殊仕様の照合ID: {bundleId}</small>}
+                  {bundleId && <small className="qr-bundle-id">カスタム仕様の照合ID: {bundleId}</small>}
                   {totalQrParts > 1 && <small className="qr-total-note">合計 {totalQrParts} 枚・順不同で読取可能</small>}
                   {qrError && <p className="qr-error">{qrError}</p>}
                 </div>
@@ -122,6 +130,12 @@ export function PlanShare({ plan }: PlanShareProps) {
                   <textarea id="shared-plan-url" className="share-url" readOnly value={url} onFocus={(event) => event.currentTarget.select()} />
                   <div className="share-link-meta"><span>{url.length.toLocaleString()}文字</span><span>リンクを知る人は内容を閲覧できます</span></div>
                   <button className="button primary share-copy" onClick={() => void copyUrl()}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? "コピーしました" : "URLをコピー"}</button>
+                  {profileLabel && (
+                    <div className="share-help">
+                      <strong>コンテナ定義</strong>
+                      <p>{profileLabel}（20GP・40GP・40HC・20OT・40OT・20FR・40FR・RF）{specsQrParts.length ? "を基準に、カスタム差分のみを追加QRへ保存しています。" : "を参照するため、仕様寸法はQRへ重複保存していません。"}</p>
+                    </div>
+                  )}
                   <div className="share-help"><strong>読み込み方</strong><p>{readHelp}</p></div>
                 </div>
               </div>
