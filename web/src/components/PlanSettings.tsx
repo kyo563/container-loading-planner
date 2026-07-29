@@ -1,5 +1,6 @@
 import { AlertTriangle, Boxes, ChevronDown, Gauge, LockKeyhole, Route } from "lucide-react";
 
+import { customContainerSpecsFromEffective, STANDARD_CONTAINER_PROFILE_LABEL } from "../domain/containerProfiles";
 import type { ContainerSpec, PlanningSettings } from "../domain/types";
 
 interface PlanSettingsProps {
@@ -21,6 +22,7 @@ export function PlanSettings({
   settings,
   onSettingsChange,
 }: PlanSettingsProps) {
+  const customSpecCount = customContainerSpecsFromEffective(specs).length;
   const setSetting = <K extends keyof PlanningSettings>(key: K, value: PlanningSettings[K]) =>
     onSettingsChange({ ...settings, [key]: value });
 
@@ -48,7 +50,10 @@ export function PlanSettings({
       {mode === "estimate" ? (
         <div className="setting-note">
           <Boxes size={19} />
-          <div><strong>標準・特殊コンテナを自動評価します</strong><p>OOG、冷凍・冷蔵、重量、床面積を確認し、本数を抑える構成を探索します。</p></div>
+          <div>
+            <strong>{customSpecCount ? `基本マスター＋編集コンテナ${customSpecCount}タイプを評価します` : "固定の基本コンテナ情報を使用します"}</strong>
+            <p>{customSpecCount ? "コンテナ設定でプランへ読み込んだ実機値を反映します。" : `${STANDARD_CONTAINER_PROFILE_LABEL}をそのまま採用し、コンテナ寸法はQRへ格納しません。`}</p>
+          </div>
         </div>
       ) : (
         <div className="count-settings">
