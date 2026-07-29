@@ -1,5 +1,5 @@
 import { ArrowRight, Boxes, CheckCircle2, Lock, Ruler, ShieldCheck, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CargoInput } from "./components/CargoInput";
 import { ContainerEditor } from "./components/ContainerEditor";
@@ -9,7 +9,8 @@ import { PlanResults } from "./components/PlanResults";
 import { PlanQrScanner } from "./components/PlanQrScanner";
 import { PlanSettings } from "./components/PlanSettings";
 import { VolumeConverter } from "./components/VolumeConverter";
-import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, SAMPLE_CARGO } from "./domain/constants";
+import { DEFAULT_SETTINGS, SAMPLE_CARGO } from "./domain/constants";
+import { customContainerSpecsFromEffective, effectiveContainerSpecs } from "./domain/containerProfiles";
 import { expandPieces, validateCargoRows } from "./domain/input";
 import { estimatePlan, validatePlan } from "./domain/planner";
 import { decodeSharedPlan, sharedQrKind, specsTokenFromHash, supplementalBundleId, SupplementalQrRequiredError, tokenFromHash } from "./domain/sharedPlan";
@@ -173,7 +174,8 @@ export default function App() {
   const [view, setView] = useState<AppView>("planner");
   const [rows, setRows] = useState<CargoRow[]>(() => SAMPLE_CARGO.map((row) => ({ ...row })));
   const [isSample, setIsSample] = useState(true);
-  const [specs, setSpecs] = useState<ContainerSpec[]>(() => DEFAULT_CONTAINERS.map((spec) => ({ ...spec })));
+  const [activeCustomSpecs, setActiveCustomSpecs] = useState<ContainerSpec[]>([]);
+  const specs = useMemo(() => effectiveContainerSpecs(activeCustomSpecs), [activeCustomSpecs]);
   const [mode, setMode] = useState<"estimate" | "validate">("estimate");
   const [counts, setCounts] = useState<Record<string, number>>({ ...DEFAULT_COUNTS });
   const [settings, setSettings] = useState<PlanningSettings>({ ...DEFAULT_SETTINGS });
@@ -186,11 +188,19 @@ export default function App() {
   const pendingPlan = useRef<{ token: string; bundleId: string } | null>(null);
   const pendingSpecs = useRef(new Map<string, string>());
 
+  const changeActiveCustomSpecs = useCallback((next: ContainerSpec[]) => {
+    const knownTypes = new Set(effectiveContainerSpecs(next).map((spec) => spec.type));
+    setActiveCustomSpecs(next);
+    setCounts((current) => Object.fromEntries(
+      Object.entries(current).filter(([type]) => knownTypes.has(type)),
+    ));
+  }, []);
+
   const startNewPlan = () => {
     if (!window.confirm("現在の貨物情報と計算結果をすべて消去し、新しいプランを作成しますか？")) return;
     setRows([]);
     setIsSample(false);
-    setSpecs(DEFAULT_CONTAINERS.map((spec) => ({ ...spec })));
+    setActiveCustomSpecs([]);
     setMode("estimate");
     setCounts({ ...DEFAULT_COUNTS });
     setSettings({ ...DEFAULT_SETTINGS });
@@ -208,7 +218,7 @@ export default function App() {
     const shared = await decodeSharedPlan(token, specsToken);
     setRows(shared.rows);
     setIsSample(false);
-    setSpecs(shared.specs);
+    setActiveCustomSpecs(customContainerSpecsFromEffective(shared.specs));
     setMode(shared.mode);
     setCounts(shared.counts);
     setSettings(shared.settings);
@@ -274,7 +284,12 @@ export default function App() {
       {restoreError && <div className="restore-error" role="alert"><strong>共有プランを読み込めません</strong><p>{restoreError}</p></div>}
       {view === "planner" && <PlannerPage rows={rows} setRows={setRows} isSample={isSample} setIsSample={setIsSample} specs={specs} mode={mode} setMode={setMode} counts={counts} setCounts={setCounts} settings={settings} setSettings={setSettings} restoreRevision={restoreRevision} resetRevision={resetRevision} restoreMessage={restoreMessage} />}
       {view === "converter" && <VolumeConverter />}
-      {view === "containers" && <ContainerEditor specs={specs} onChange={setSpecs} />}
+      {view === "containers" && (
+        <ContainerEditor
+          activeCustomSpecs={activeCustomSpecs}
+          onActiveCustomSpecsChange={changeActiveCustomSpecs}
+        />
+      )}
       {view === "guide" && <Guide />}
       <footer className="site-footer no-print"><div><span className="brand-mark small"><Boxes size={17} /></span><strong>LoadPilot</strong></div><p>初期積載検討を支援するオープンソースツールです。最終判断は実機材・法令・運送条件を確認してください。</p><span><Lock size={14} />データは保存・送信されません</span></footer>
     </div>

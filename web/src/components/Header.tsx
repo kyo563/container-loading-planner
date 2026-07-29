@@ -6,7 +6,7 @@ import type { AppView } from "../domain/types";
 const NAV_ITEMS: { id: AppView; label: string; icon: typeof Box }[] = [
   { id: "planner", label: "積載計画", icon: Box },
   { id: "converter", label: "容積換算", icon: Calculator },
-  { id: "containers", label: "コンテナ仕様", icon: Container },
+  { id: "containers", label: "コンテナ設定", icon: Container },
   { id: "guide", label: "使い方・注意", icon: FileQuestion },
 ];
 
