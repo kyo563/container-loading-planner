@@ -15,6 +15,7 @@ import { assertValidPlanningInput } from "./validation";
 import { cargoCenterOfGravity, splitWeightAcrossMidpoint } from "./weightBalance";
 
 const keyFor = (type: string, index: number): string => `${type}-${index}`;
+const PRACTICAL_PACKING_REASON = "貨物はトラックサイド側から隙間なく寄せ、同一・同寸法貨物をまとめ、左右バランスを優先して配置しました。前後バランスは積載効率を損なわない範囲の努力目標です。";
 
 const isOw = (oog: OogResult): boolean => oog.over_L_cm > 0 || oog.over_W_cm > 0;
 const isOhOnly = (oog: OogResult): boolean => oog.over_H_cm > 0 && !isOw(oog);
@@ -197,14 +198,16 @@ export const computeBias = (load: ContainerLoad, thresholdPct: number): BiasMetr
   const offsetY = ceilTo((Math.abs((centerOfGravity?.yCm ?? halfW) - halfW) / halfW) * 100, 0.001);
   const frontRear = ceilTo((Math.abs(front - rear) / (totalWeight / 2)) * 100, 0.001);
   const leftRight = ceilTo((Math.abs(left - right) / (totalWeight / 2)) * 100, 0.001);
-  const reasons: string[] = [];
-  if (offsetX > thresholdPct) reasons.push("前後重心偏差");
-  if (offsetY > thresholdPct) reasons.push("左右重心偏差");
-  if (frontRear > thresholdPct) reasons.push("前後重量差");
-  if (leftRight > thresholdPct) reasons.push("左右重量差");
+  const warningReasons: string[] = [];
+  const effortReasons: string[] = [];
+  if (offsetY > thresholdPct) warningReasons.push("左右重心偏差");
+  if (leftRight > thresholdPct) warningReasons.push("左右重量差");
+  if (offsetX > thresholdPct) effortReasons.push("前後重心偏差");
+  if (frontRear > thresholdPct) effortReasons.push("前後重量差");
+  const effortNote = effortReasons.length ? `${effortReasons.join(" / ")}（積載効率優先の努力目標）` : "";
   return {
-    bias_warn: reasons.length > 0,
-    bias_reason: reasons.join(" / "),
+    bias_warn: warningReasons.length > 0,
+    bias_reason: [...warningReasons, effortNote].filter(Boolean).join(" / "),
     offset_x_pct: offsetX,
     offset_y_pct: offsetY,
     front_rear_diff_pct: frontRear,
@@ -343,6 +346,7 @@ export const estimatePlan = (
   const unplacedMap = new Map<string, Piece>();
   [...breakbulk, ...unplacedSpecial, ...standard.unplaced].forEach((piece) => unplacedMap.set(piece.piece_id, piece));
   const decisionReasons: string[] = [];
+  if (loads.length) decisionReasons.push(PRACTICAL_PACKING_REASON);
   if ([...specialReasons.values()].some((reason) => reason.includes("冷凍・冷蔵"))) decisionReasons.push("冷凍・冷蔵貨物はRFへ分離しました。");
   if ([...specialReasons.values()].some((reason) => reason.includes("FR候補"))) decisionReasons.push("長さ・幅超過貨物はFRへ振り分けました。船社承認と固縛条件の確認が必要です。");
   if ([...specialReasons.values()].some((reason) => reason.includes("OT候補"))) decisionReasons.push("高さ超過貨物はOTへ振り分けました。上方クリアランスの確認が必要です。");
@@ -387,6 +391,7 @@ export const validatePlan = (
   const normalized = normalizeLoadIndices(loads);
   const audits = attachAudits(normalized, settings);
   const decisionReasons = remaining.length ? ["指定本数に収まらない貨物があります。積載不可一覧とOOG判定を確認してください。"] : [];
+  if (normalized.length) decisionReasons.push(PRACTICAL_PACKING_REASON);
   const balanceReason = weightBalanceReason(normalized);
   if (balanceReason) decisionReasons.push(balanceReason);
   const separatedReason = incompatibilityReason(pieces, normalized);
