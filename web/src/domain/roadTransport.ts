@@ -8,11 +8,14 @@ export const DIMENSION_C_NIGHT_WIDTH_CM = 300;
 const TWO_AXLE_CONTAINER_LIMIT_KG = { "20": 20_320, "40": 24_000 } as const;
 const THREE_AXLE_CONTAINER_LIMIT_KG = { "20": 24_000, "40": 30_480 } as const;
 
+export type ChassisAssessmentLevel = "ok" | "caution" | "warning";
+
 export interface JapanRoadTransportAssessment {
   cargoWeightKg: number;
   containerGrossKg: number;
   averageFloorLoadKgM2: number;
   chassisClass: "20" | "40";
+  chassisLevel: ChassisAssessmentLevel;
   chassisMessage: string;
   specialPermitMessage?: string;
   escortMessage?: string;
@@ -36,11 +39,16 @@ export const assessJapanRoadTransport = (load: ContainerLoad): JapanRoadTranspor
   const twoAxleLimit = TWO_AXLE_CONTAINER_LIMIT_KG[chassisClass];
   const threeAxleLimit = THREE_AXLE_CONTAINER_LIMIT_KG[chassisClass];
 
-  const chassisMessage = containerGrossKg > threeAxleLimit
-    ? `3軸目安${threeAxleLimit.toLocaleString()}kg超・輸送方法要確認`
+  const chassisLevel: ChassisAssessmentLevel = containerGrossKg > threeAxleLimit
+    ? "warning"
     : containerGrossKg > twoAxleLimit
-      ? `要3軸候補（2軸目安${twoAxleLimit.toLocaleString()}kg超）`
-      : `2軸目安内（上限${twoAxleLimit.toLocaleString()}kg・車検証確認）`;
+      ? "caution"
+      : "ok";
+  const chassisMessage = chassisLevel === "warning"
+    ? `3軸シャーシ上限目安${threeAxleLimit.toLocaleString()}kg超（総重量${containerGrossKg.toLocaleString()}kg）・輸送方法要確認`
+    : chassisLevel === "caution"
+      ? `要三軸シャーシ（総重量${containerGrossKg.toLocaleString()}kg／2軸上限${twoAxleLimit.toLocaleString()}kg超・3軸上限${threeAxleLimit.toLocaleString()}kg以下）`
+      : `2軸シャーシ範囲内（総重量${containerGrossKg.toLocaleString()}kg／上限${twoAxleLimit.toLocaleString()}kg）`;
 
   let specialPermitMessage: string | undefined;
   let escortMessage: string | undefined;
@@ -56,5 +64,5 @@ export const assessJapanRoadTransport = (load: ContainerLoad): JapanRoadTranspor
       : "許可経路のC・D条件により誘導車措置の可能性あり";
   }
 
-  return { cargoWeightKg, containerGrossKg, averageFloorLoadKgM2, chassisClass, chassisMessage, specialPermitMessage, escortMessage, cargoEnvelopeWidthCm, cargoTopHeightCm };
+  return { cargoWeightKg, containerGrossKg, averageFloorLoadKgM2, chassisClass, chassisLevel, chassisMessage, specialPermitMessage, escortMessage, cargoEnvelopeWidthCm, cargoTopHeightCm };
 };
