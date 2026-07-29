@@ -13,9 +13,10 @@ const piece = (
   lengthCm: number,
   widthCm: number,
   weightKg: number,
+  origId = pieceId,
 ): Piece => ({
   piece_id: pieceId,
-  orig_id: pieceId,
+  orig_id: origId,
   piece_no: 1,
   desc: pieceId,
   L_cm: lengthCm,
@@ -31,7 +32,7 @@ const piece = (
 });
 
 describe("コンテナ内重量バランス", () => {
-  it("異寸法貨物でも重量物を中央へ寄せて前後・左右の偏りを抑える", () => {
+  it("異寸法貨物を前詰めしたまま重量物を可能な範囲で中央へ寄せる", () => {
     const pieces = sortPieces([
       piece("HEAVY", 200, 90, 9_000),
       piece("LIGHT-A", 200, 80, 1_000),
@@ -41,12 +42,87 @@ describe("コンテナ内重量バランス", () => {
     const load = packed.loads[0];
     const heavy = load.placements.find((placement) => placement.piece.piece_id === "HEAVY")!;
     const metrics = computeBias(load, 20);
+    const ordered = [...load.placements].sort((a, b) => a.placed_x_cm - b.placed_x_cm);
 
     expect(packed.unplaced).toHaveLength(0);
-    expect(heavy.placed_x_cm + heavy.orient_L_cm / 2).toBeCloseTo(STANDARD_40HC.inner_L_cm / 2);
-    expect(metrics.offset_x_pct).toBeLessThan(0.1);
+    expect(ordered.map((placement) => placement.placed_x_cm)).toEqual([0, 200, 400]);
+    expect(heavy.placed_x_cm).toBe(400);
+    expect(metrics.offset_x_pct).toBeGreaterThan(20);
     expect(metrics.offset_y_pct).toBeLessThan(2);
     expect(metrics.bias_warn).toBe(false);
+    expect(metrics.bias_reason).toContain("積載効率優先の努力目標");
+  });
+
+  it("同一貨物を分断せず、各列をトラックサイド側から連続配置する", () => {
+    const packed = packPieces(STANDARD_40HC, sortPieces([
+      piece("A#1", 100, 100, 500, "A"),
+      piece("B#1", 100, 100, 500, "B"),
+      piece("A#2", 100, 100, 500, "A"),
+      piece("C#1", 100, 100, 500, "C"),
+      piece("B#2", 100, 100, 500, "B"),
+      piece("C#2", 100, 100, 500, "C"),
+    ]), 1);
+
+    const rows = [...new Set(packed.loads[0].placements.map((placement) => placement.placed_y_cm))]
+      .map((y) => packed.loads[0].placements
+        .filter((placement) => placement.placed_y_cm === y)
+        .sort((a, b) => a.placed_x_cm - b.placed_x_cm));
+
+    expect(packed.unplaced).toHaveLength(0);
+    for (const row of rows) {
+      expect(row[0].placed_x_cm).toBe(0);
+      for (let index = 1; index < row.length; index += 1) {
+        expect(row[index].placed_x_cm).toBe(row[index - 1].placed_x_cm + row[index - 1].orient_L_cm);
+      }
+      const sequence = row.map((placement) => placement.piece.orig_id);
+      const compressed = sequence.filter((origId, index) => index === 0 || origId !== sequence[index - 1]);
+      expect(new Set(compressed).size).toBe(compressed.length);
+    }
+  });
+
+  it("異なる貨物IDでも同寸法グループを隣接させる", () => {
+    const packed = packPieces(STANDARD_40HC, sortPieces([
+      piece("A#1", 100, 80, 300, "A"),
+      piece("B#1", 100, 80, 400, "B"),
+      piece("C#1", 200, 70, 500, "C"),
+      piece("A#2", 100, 80, 300, "A"),
+      piece("B#2", 100, 80, 400, "B"),
+    ]), 1);
+    const ordered = [...packed.loads[0].placements].sort((a, b) => a.placed_x_cm - b.placed_x_cm);
+    const sizeSequence = ordered.map((placement) => `${placement.orient_L_cm}x${placement.orient_W_cm}`);
+    const compressedSizes = sizeSequence.filter((size, index) => index === 0 || size !== sizeSequence[index - 1]);
+
+    expect(packed.unplaced).toHaveLength(0);
+    expect(new Set(compressedSizes).size).toBe(compressedSizes.length);
+    expect(ordered
+      .filter((placement) => placement.orient_L_cm === 100)
+      .map((placement) => placement.piece.orig_id))
+      .toEqual(["A", "A", "B", "B"]);
+  });
+
+  it("満載に近い場合は貨物グループを保ったまま重量物を中央付近に置く", () => {
+    const group = (origId: string, count: number, weightKg: number) =>
+      Array.from({ length: count }, (_, index) => piece(`${origId}#${index + 1}`, 100, 100, weightKg, origId));
+    const packed = packPieces(STANDARD_40HC, sortPieces([
+      ...group("A", 8, 100),
+      ...group("HEAVY", 4, 5_000),
+      ...group("B", 8, 100),
+    ]), 1);
+    const centersByGroup = new Map<string, number[]>();
+    for (const placement of packed.loads[0].placements) {
+      const centers = centersByGroup.get(placement.piece.orig_id) ?? [];
+      centers.push(placement.placed_x_cm + placement.orient_L_cm / 2);
+      centersByGroup.set(placement.piece.orig_id, centers);
+    }
+    const averageCenter = (origId: string) => {
+      const centers = centersByGroup.get(origId)!;
+      return centers.reduce((sum, center) => sum + center, 0) / centers.length;
+    };
+    const midpoint = STANDARD_40HC.inner_L_cm / 2;
+
+    expect(packed.unplaced).toHaveLength(0);
+    expect(Math.abs(averageCenter("HEAVY") - midpoint)).toBeLessThan(Math.abs(averageCenter("A") - midpoint));
+    expect(Math.abs(averageCenter("HEAVY") - midpoint)).toBeLessThan(Math.abs(averageCenter("B") - midpoint));
   });
 
   it("中央線をまたぐ貨物重量を占有長さに応じて両側へ按分する", () => {
