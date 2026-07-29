@@ -228,10 +228,10 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
               </div>
             </div>
             {(selectedBias?.bias_warn || selectedWeight?.weight_alert || selectedRoad?.chassisLevel === "warning") && (
-              <div className="container-warning container-warning-danger"><AlertTriangle size={18} /><div><strong>このコンテナは要確認です</strong><p>{[selectedBias?.bias_reason, selectedWeight?.weight_alert_message, selectedRoad?.chassisLevel === "warning" ? selectedRoad.chassisMessage : undefined].filter(Boolean).join(" / ")}</p></div></div>
+              <div className="container-warning"><AlertTriangle size={18} /><div><strong>このコンテナは要確認です</strong><p>{[selectedBias?.bias_reason, selectedWeight?.weight_alert_message, selectedRoad?.chassisLevel === "warning" ? selectedRoad.chassisMessage : undefined].filter(Boolean).join(" / ")}</p></div></div>
             )}
             {selectedRoad?.chassisLevel === "caution" && (
-              <div className="container-warning chassis-caution"><AlertTriangle size={18} /><div><strong>注意：要三軸シャーシ</strong><p>{selectedRoad.chassisMessage}</p></div></div>
+              <div className="container-warning"><AlertTriangle size={18} /><div><strong>注意：要三軸シャーシ</strong><p>{selectedRoad.chassisMessage}</p></div></div>
             )}
           </article>
         </div>
@@ -276,8 +276,7 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
             const road = roadAssessments.get(kpi.container_key);
             const requiresReview = kpi.bias_warn || kpi.weight_alert || road?.chassisLevel === "warning" || Boolean(road?.specialPermitMessage);
             const requiresThreeAxle = road?.chassisLevel === "caution";
-            const chassisMessageClass = road?.chassisLevel === "caution" ? "transport-caution" : road?.chassisLevel === "warning" ? "transport-warning" : undefined;
-            return <tr key={kpi.container_key}><td><strong>{kpi.container_label}</strong></td><td>{kpi.piece_count}</td><td>{fmt(kpi.total_ft, 3)}</td><td>{fmt(kpi.total_m3, 3)}</td><td>{fmtInt(kpi.total_gross_kg)} kg</td><td>{fmtInt(road?.averageFloorLoadKgM2 ?? 0)} kg/m²<small className="cell-note">貨物重量÷内寸床面積</small></td><td>{fmt(kpi.payload_ratio_pct, 1)}%</td><td>{fmt(kpi.volume_ratio_pct, 1)}%</td><td className="transport-check-cell"><strong className={chassisMessageClass}>{road?.chassisMessage}</strong>{road?.specialPermitMessage && <small>{road.specialPermitMessage}</small>}{road?.escortMessage && <small>{road.escortMessage}</small>}</td><td className="audit-status-cell">{requiresReview && <span className="status-chip red">要確認</span>}{requiresThreeAxle && <span className="status-chip amber">注意：要三軸シャーシ</span>}{!requiresReview && !requiresThreeAxle && <span className="status-chip green">範囲内</span>}</td></tr>;
+            return <tr key={kpi.container_key}><td><strong>{kpi.container_label}</strong></td><td>{kpi.piece_count}</td><td>{fmt(kpi.total_ft, 3)}</td><td>{fmt(kpi.total_m3, 3)}</td><td>{fmtInt(kpi.total_gross_kg)} kg</td><td>{fmtInt(road?.averageFloorLoadKgM2 ?? 0)} kg/m²<small className="cell-note">貨物重量÷内寸床面積</small></td><td>{fmt(kpi.payload_ratio_pct, 1)}%</td><td>{fmt(kpi.volume_ratio_pct, 1)}%</td><td className="transport-check-cell"><strong>{road?.chassisMessage}</strong>{road?.specialPermitMessage && <small>{road.specialPermitMessage}</small>}{road?.escortMessage && <small>{road.escortMessage}</small>}</td><td>{requiresReview && <span className="status-chip red">要確認</span>}{requiresThreeAxle && <span className="status-chip amber">注意：要三軸シャーシ</span>}{!requiresReview && !requiresThreeAxle && <span className="status-chip green">範囲内</span>}</td></tr>;
           })}
         </tbody><tfoot><tr><td><strong>積載済み総計</strong></td><td><strong>{loadedTotals.pieces}</strong></td><td><strong>{fmt(loadedTotals.ft, 3)}</strong></td><td><strong>{fmt(loadedTotals.m3, 3)}</strong></td><td><strong>{fmtInt(loadedTotals.weight)} kg</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr></tfoot></table></div></div>
         <div className={containerReportView === "packing" ? "packing-list-view" : "packing-list-view report-view-hidden"}>
