@@ -3,6 +3,7 @@ import { useId } from "react";
 import { buildLayoutLabels } from "../domain/layoutLabels";
 import { oogDisplayMetrics } from "../domain/oogDisplay";
 import type { ContainerLoad, ContainerSpec, OogResult, Placement } from "../domain/types";
+import { cargoCenterOfGravity } from "../domain/weightBalance";
 
 const OOG_ANNOTATION_FONT_RATIO = 0.018;
 const OOG_ANNOTATION_MIN_FONT_SIZE = 14;
@@ -16,6 +17,9 @@ const STACK_ANNOTATION_HEIGHT_RATIO = 0.3;
 const STACK_ANNOTATION_CHARACTER_WIDTH_RATIO = 0.62;
 const STACK_ANNOTATION_HORIZONTAL_PADDING_CM = 12;
 const STACK_ANNOTATION_VERTICAL_PADDING_RATIO = 1.8;
+const CENTER_OF_GRAVITY_MARKER_RATIO = 0.012;
+const CENTER_OF_GRAVITY_MARKER_MIN_CM = 8;
+const CENTER_OF_GRAVITY_MARKER_MAX_CM = 18;
 
 const colorFor = (value: string): string => {
   let hash = 0;
@@ -101,6 +105,11 @@ export function ContainerLayout({ load, oogResults }: ContainerLayoutProps) {
     placement.piece.piece_id,
     widthDisplayProjection(placement, load.spec),
   ]));
+  const centerOfGravity = cargoCenterOfGravity(load);
+  const centerOfGravityMarkerRadius = Math.max(
+    CENTER_OF_GRAVITY_MARKER_MIN_CM,
+    Math.min(CENTER_OF_GRAVITY_MARKER_MAX_CM, load.spec.inner_L_cm * CENTER_OF_GRAVITY_MARKER_RATIO),
+  );
   const hasTruncatedWidth = [...widthProjections.values()]
     .some((projection) => projection.leftTruncated || projection.rightTruncated);
   const minWidth = Math.min(0, ...[...widthProjections.values()].map((projection) => projection.y));
@@ -357,6 +366,73 @@ export function ContainerLayout({ load, oogResults }: ContainerLayoutProps) {
           </g>
         );
       })}
+      {centerOfGravity && (
+        <g
+          className="cargo-center-of-gravity"
+          pointerEvents="none"
+          aria-label={`貨物重心 X ${formatCm(centerOfGravity.xCm)}cm、Y ${formatCm(centerOfGravity.yCm)}cm`}
+        >
+          <line
+            x1={load.spec.inner_L_cm / 2}
+            y1={load.spec.inner_W_cm / 2}
+            x2={centerOfGravity.xCm}
+            y2={centerOfGravity.yCm}
+            stroke="#a73345"
+            strokeWidth="3"
+            strokeDasharray="7 5"
+          />
+          <circle
+            cx={load.spec.inner_L_cm / 2}
+            cy={load.spec.inner_W_cm / 2}
+            r={centerOfGravityMarkerRadius * 0.42}
+            fill="#fff"
+            stroke="#17324a"
+            strokeWidth="2"
+          />
+          <circle
+            cx={centerOfGravity.xCm}
+            cy={centerOfGravity.yCm}
+            r={centerOfGravityMarkerRadius}
+            fill="#a73345"
+            stroke="#fff"
+            strokeWidth="3"
+          />
+          <line
+            x1={centerOfGravity.xCm - centerOfGravityMarkerRadius * 0.55}
+            y1={centerOfGravity.yCm}
+            x2={centerOfGravity.xCm + centerOfGravityMarkerRadius * 0.55}
+            y2={centerOfGravity.yCm}
+            stroke="#fff"
+            strokeWidth="2.5"
+          />
+          <line
+            x1={centerOfGravity.xCm}
+            y1={centerOfGravity.yCm - centerOfGravityMarkerRadius * 0.55}
+            x2={centerOfGravity.xCm}
+            y2={centerOfGravity.yCm + centerOfGravityMarkerRadius * 0.55}
+            stroke="#fff"
+            strokeWidth="2.5"
+          />
+          <text
+            x={Math.min(
+              load.spec.inner_L_cm - centerOfGravityMarkerRadius * 3.6,
+              centerOfGravity.xCm + centerOfGravityMarkerRadius * 1.45,
+            )}
+            y={Math.max(
+              centerOfGravityMarkerRadius,
+              centerOfGravity.yCm - centerOfGravityMarkerRadius * 1.2,
+            )}
+            fontSize={centerOfGravityMarkerRadius}
+            fontWeight="900"
+            fill="#8f2438"
+            stroke="#fff"
+            strokeWidth={centerOfGravityMarkerRadius * 0.18}
+            paintOrder="stroke"
+          >
+            貨物重心
+          </text>
+        </g>
+      )}
       <rect
         className="container-deck-outline"
         x="0"
