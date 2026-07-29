@@ -79,6 +79,14 @@ describe("ContainerLayout OW表示", () => {
     );
   });
 
+  it("貨物重量から算出した重心位置を上面図へ表示する", () => {
+    const markup = renderToStaticMarkup(<ContainerLayout load={{ spec, index: 1, placements: [placement] }} />);
+
+    expect(markup).toContain('class="cargo-center-of-gravity"');
+    expect(markup).toContain("貨物重心 X 580cm、Y 120cm");
+    expect(markup).toContain(">貨物重心</text>");
+  });
+
   it("極端なOWは描画幅だけを打ち切り、実超過量と省略記号を表示する", () => {
     const extremePlacement = {
       ...placement,
