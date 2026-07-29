@@ -220,7 +220,7 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
               </div>
               <div>
                 <span>重心偏差 X / Y</span><strong>{fmt(selectedBias?.offset_x_pct ?? 0, 1)} / {fmt(selectedBias?.offset_y_pct ?? 0, 1)}%</strong>
-                <small>{selectedBias?.bias_warn ? selectedBias.bias_reason : "警告閾値内"}</small>
+                <small>{selectedBias?.bias_reason || "左右・前後とも警告閾値内"}</small>
               </div>
               <div>
                 <span>総重量目安</span><strong>{fmtInt(selectedWeight?.gross_weight_kg ?? 0)} kg</strong>

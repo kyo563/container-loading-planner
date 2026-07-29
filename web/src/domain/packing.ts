@@ -238,7 +238,12 @@ class ShelfPacker {
 export const sortPieces = (pieces: Piece[]): Piece[] =>
   [...pieces].sort(
     (a, b) =>
-      b.L_cm - a.L_cm || b.W_cm - a.W_cm || b.H_cm - a.H_cm || b.weight_kg - a.weight_kg,
+      b.L_cm - a.L_cm ||
+      b.W_cm - a.W_cm ||
+      b.H_cm - a.H_cm ||
+      a.orig_id.localeCompare(b.orig_id) ||
+      a.piece_no - b.piece_no ||
+      b.weight_kg - a.weight_kg,
   );
 
 const packSequentially = (spec: ContainerSpec, pieces: Piece[], maxContainers?: number): PackResult => {
@@ -353,12 +358,25 @@ interface BalanceSequenceItem<T> {
   stableKey: string;
 }
 
-const sequenceBalanceScore = <T,>(items: BalanceSequenceItem<T>[], extentCm: number): number => {
+type SequenceAlignment = "start" | "center";
+
+const sequenceStartCm = <T,>(
+  items: BalanceSequenceItem<T>[],
+  extentCm: number,
+  alignment: SequenceAlignment,
+): number => alignment === "center"
+  ? (extentCm - items.reduce((sum, item) => sum + item.sizeCm, 0)) / 2
+  : 0;
+
+const sequenceBalanceScore = <T,>(
+  items: BalanceSequenceItem<T>[],
+  extentCm: number,
+  alignment: SequenceAlignment,
+): number => {
   const totalWeight = items.reduce((sum, item) => sum + item.weightKg, 0);
   if (totalWeight <= 0) return 0;
   const midpoint = extentCm / 2;
-  const totalSize = items.reduce((sum, item) => sum + item.sizeCm, 0);
-  let cursor = (extentCm - totalSize) / 2;
+  let cursor = sequenceStartCm(items, extentCm, alignment);
   let weightedPosition = 0;
   let beforeWeight = 0;
   let afterWeight = 0;
@@ -374,7 +392,7 @@ const sequenceBalanceScore = <T,>(items: BalanceSequenceItem<T>[], extentCm: num
   const centerOffsetPct = (Math.abs(weightedPosition / totalWeight - midpoint) / Math.max(midpoint, EPSILON)) * 100;
   const sideDifferencePct = (Math.abs(beforeWeight - afterWeight) / Math.max(totalWeight / 2, EPSILON)) * 100;
 
-  // 重心偏差を主目的とし、中央線前後（左右）の重量差を1/4の重みで加える。
+  // 空間を追加せず、重心偏差を主目的として中央線前後の重量差を1/4の重みで加える。
   return centerOffsetPct + sideDifferencePct * SIDE_WEIGHT_BALANCE_FACTOR;
 };
 
@@ -398,6 +416,7 @@ const pendulumSequence = <T,>(
 const improveBalanceSequence = <T,>(
   items: BalanceSequenceItem<T>[],
   extentCm: number,
+  alignment: SequenceAlignment,
 ): BalanceSequenceItem<T>[] => {
   if (items.length <= 1) return items;
   const candidates = [
@@ -406,21 +425,21 @@ const improveBalanceSequence = <T,>(
     pendulumSequence(items, false),
   ];
   let best = candidates.reduce((selected, candidate) =>
-    sequenceBalanceScore(candidate, extentCm) + EPSILON < sequenceBalanceScore(selected, extentCm)
+    sequenceBalanceScore(candidate, extentCm, alignment) + EPSILON < sequenceBalanceScore(selected, extentCm, alignment)
       ? candidate
       : selected,
   );
   if (best.length > MAX_BALANCE_SWAP_ITEMS) return best;
 
   for (let pass = 0; pass < MAX_BALANCE_SWAP_PASSES; pass += 1) {
-    const currentScore = sequenceBalanceScore(best, extentCm);
+    const currentScore = sequenceBalanceScore(best, extentCm, alignment);
     let nextBest = best;
     let nextScore = currentScore;
     for (let left = 0; left < best.length - 1; left += 1) {
       for (let right = left + 1; right < best.length; right += 1) {
         const candidate = [...best];
         [candidate[left], candidate[right]] = [candidate[right], candidate[left]];
-        const score = sequenceBalanceScore(candidate, extentCm);
+        const score = sequenceBalanceScore(candidate, extentCm, alignment);
         if (score + EPSILON < nextScore) {
           nextBest = candidate;
           nextScore = score;
@@ -436,8 +455,9 @@ const improveBalanceSequence = <T,>(
 const positionSequence = <T,>(
   items: BalanceSequenceItem<T>[],
   extentCm: number,
+  alignment: SequenceAlignment,
 ): Array<{ value: T; startCm: number }> => {
-  let cursor = (extentCm - items.reduce((sum, item) => sum + item.sizeCm, 0)) / 2;
+  let cursor = sequenceStartCm(items, extentCm, alignment);
   return items.map((item) => {
     const positioned = { value: item.value, startCm: cursor };
     cursor += item.sizeCm;
@@ -452,27 +472,83 @@ interface BalancedRow {
   placements: Placement[];
 }
 
+interface PlacementGroup {
+  key: string;
+  placements: Placement[];
+  lengthCm: number;
+  weightKg: number;
+}
+
+interface PlacementCluster {
+  key: string;
+  groups: PlacementGroup[];
+  lengthCm: number;
+  weightKg: number;
+}
+
+const placementGroupKey = (placement: Placement): string => [
+  placement.piece.orig_id,
+  placement.orient_L_cm,
+  placement.orient_W_cm,
+  placement.orient_H_cm,
+].join("|");
+
+const groupPlacements = (placements: Placement[]): PlacementGroup[] => {
+  const groups = new Map<string, Placement[]>();
+  for (const placement of placements) {
+    const key = placementGroupKey(placement);
+    groups.set(key, [...(groups.get(key) ?? []), placement]);
+  }
+  return [...groups.entries()].map(([key, grouped]) => ({
+    key,
+    placements: [...grouped].sort(
+      (a, b) => a.piece.piece_no - b.piece.piece_no || a.piece.piece_id.localeCompare(b.piece.piece_id),
+    ),
+    lengthCm: grouped.reduce((sum, placement) => sum + placement.orient_L_cm, 0),
+    weightKg: grouped.reduce((sum, placement) => sum + placement.piece.weight_kg, 0),
+  }));
+};
+
+const clusterPlacementGroups = (groups: PlacementGroup[]): PlacementCluster[] => {
+  const clusters = new Map<string, PlacementGroup[]>();
+  for (const group of groups) {
+    const first = group.placements[0];
+    const key = [first.orient_L_cm, first.orient_W_cm, first.orient_H_cm].join("|");
+    clusters.set(key, [...(clusters.get(key) ?? []), group]);
+  }
+  return [...clusters.entries()].map(([key, clustered]) => ({
+    key,
+    groups: clustered,
+    lengthCm: clustered.reduce((sum, group) => sum + group.lengthCm, 0),
+    weightKg: clustered.reduce((sum, group) => sum + group.weightKg, 0),
+  }));
+};
+
 const balanceExistingRows = (load: ContainerLoad): ContainerLoad => {
   const rows = new Map<number, Placement[]>();
   for (const placement of load.placements) {
     rows.set(placement.placed_y_cm, [...(rows.get(placement.placed_y_cm) ?? []), placement]);
   }
   const balancedRows: BalancedRow[] = [...rows.entries()].map(([key, row]) => {
-    const ordered = improveBalanceSequence(
-      [...row]
-        .sort((a, b) => a.placed_x_cm - b.placed_x_cm)
-        .map((placement) => ({
-          value: placement,
-          sizeCm: placement.orient_L_cm,
-          weightKg: placement.piece.weight_kg,
-          stableKey: placement.piece.piece_id,
+    const orderedClusters = improveBalanceSequence(
+      clusterPlacementGroups(groupPlacements([...row].sort((a, b) => a.placed_x_cm - b.placed_x_cm)))
+        .map((cluster) => ({
+          value: cluster,
+          sizeCm: cluster.lengthCm,
+          weightKg: cluster.weightKg,
+          stableKey: cluster.key,
         })),
       load.spec.inner_L_cm,
+      "start",
     );
-    const placements = positionSequence(ordered, load.spec.inner_L_cm).map(({ value, startCm }) => ({
-      ...value,
-      placed_x_cm: startCm,
-    }));
+    const placements = positionSequence(orderedClusters, load.spec.inner_L_cm, "start").flatMap(({ value: cluster, startCm }) => {
+      let cursor = startCm;
+      return cluster.groups.flatMap((group) => group.placements.map((placement) => {
+          const positioned = { ...placement, placed_x_cm: cursor };
+          cursor += placement.orient_L_cm;
+          return positioned;
+        }));
+    });
     return {
       key,
       depthCm: Math.max(...placements.map((placement) => placement.orient_W_cm)),
@@ -490,8 +566,9 @@ const balanceExistingRows = (load: ContainerLoad): ContainerLoad => {
         stableKey: String(row.key),
       })),
     load.spec.inner_W_cm,
+    "center",
   );
-  const placements = positionSequence(orderedRows, load.spec.inner_W_cm).flatMap(({ value: row, startCm }) =>
+  const placements = positionSequence(orderedRows, load.spec.inner_W_cm, "center").flatMap(({ value: row, startCm }) =>
     row.placements.map((placement) => ({ ...placement, placed_y_cm: startCm })),
   );
   return { ...load, placements };
@@ -507,35 +584,46 @@ const balanceUniformLoad = (load: ContainerLoad): ContainerLoad | null => {
       placement.orient_H_cm === first.orient_H_cm,
   );
   if (!uniform) return null;
-  const rowCount = 2;
+  const rowCount = Math.min(
+    load.placements.length,
+    Math.floor((load.spec.inner_W_cm - WIDTH_CLEARANCE_CM) / first.orient_W_cm),
+  );
   const maxColumns = Math.floor(load.spec.inner_L_cm / first.orient_L_cm);
   const widthRemainder = load.spec.inner_W_cm - rowCount * first.orient_W_cm;
-  if (maxColumns < 1 || load.placements.length > rowCount * maxColumns || widthRemainder < rowCount * WIDTH_CLEARANCE_CM) return null;
+  if (rowCount < 2 || maxColumns < 1 || load.placements.length > rowCount * maxColumns || widthRemainder < WIDTH_CLEARANCE_CM) return null;
 
-  const rows: Placement[][] = [[], []];
-  const rowWeights = [0, 0];
-  const weighted = [...load.placements].sort((a, b) => b.piece.weight_kg - a.piece.weight_kg || a.piece.piece_id.localeCompare(b.piece.piece_id));
-  for (const placement of weighted) {
-    const available = [0, 1].filter((index) => rows[index].length < maxColumns);
-    const rowIndex = available.sort((a, b) => rowWeights[a] - rowWeights[b] || rows[a].length - rows[b].length || a - b)[0];
-    rows[rowIndex].push(placement);
-    rowWeights[rowIndex] += placement.piece.weight_kg;
+  const groups = groupPlacements(load.placements);
+  const orderedGroups = improveBalanceSequence(
+    groups.map((group) => ({
+      value: group,
+      sizeCm: Math.ceil(group.placements.length / rowCount) * first.orient_L_cm,
+      weightKg: group.weightKg,
+      stableKey: group.key,
+    })),
+    load.spec.inner_L_cm,
+    "start",
+  ).map((item) => item.value);
+  const rows = Array.from({ length: rowCount }, () => [] as Placement[]);
+  const rowWeights = Array.from({ length: rowCount }, () => 0);
+  for (const group of orderedGroups) {
+    for (const placement of group.placements) {
+      const available = rows
+        .map((row, index) => ({ index, count: row.length, weightKg: rowWeights[index] }))
+        .filter((row) => row.count < maxColumns)
+        .sort((a, b) => a.count - b.count || a.weightKg - b.weightKg || a.index - b.index);
+      const rowIndex = available[0]?.index;
+      if (rowIndex == null) return null;
+      rows[rowIndex].push(placement);
+      rowWeights[rowIndex] += placement.piece.weight_kg;
+    }
   }
 
   const sideMargin = widthRemainder / 2;
-  const placements = rows.flatMap((row, rowIndex) => {
-    const startX = (load.spec.inner_L_cm - row.length * first.orient_L_cm) / 2;
-    const positions = row
-      .map((_, index) => startX + index * first.orient_L_cm)
-      .sort((a, b) => Math.abs(a + first.orient_L_cm / 2 - load.spec.inner_L_cm / 2) - Math.abs(b + first.orient_L_cm / 2 - load.spec.inner_L_cm / 2));
-    return [...row]
-      .sort((a, b) => b.piece.weight_kg - a.piece.weight_kg || a.piece.piece_id.localeCompare(b.piece.piece_id))
-      .map((placement, index) => ({
-        ...placement,
-        placed_x_cm: positions[index],
-        placed_y_cm: sideMargin + rowIndex * first.orient_W_cm,
-      }));
-  });
+  const placements = rows.flatMap((row, rowIndex) => row.map((placement, columnIndex) => ({
+    ...placement,
+    placed_x_cm: columnIndex * first.orient_L_cm,
+    placed_y_cm: sideMargin + rowIndex * first.orient_W_cm,
+  })));
   return { ...load, placements };
 };
 
@@ -553,7 +641,18 @@ const balanceSpatialPlacements = (load: ContainerLoad): ContainerLoad => {
       })),
     };
   }
-  if (load.placements.some((placement) => placement.placed_z_cm !== 0)) return load;
+  if (load.placements.some((placement) => placement.placed_z_cm !== 0)) {
+    const minY = Math.min(...load.placements.map((placement) => placement.placed_y_cm));
+    const maxY = Math.max(...load.placements.map((placement) => placement.placed_y_cm + placement.orient_W_cm));
+    const shiftY = (load.spec.inner_W_cm - (maxY - minY)) / 2 - minY;
+    return {
+      ...load,
+      placements: load.placements.map((placement) => ({
+        ...placement,
+        placed_y_cm: placement.placed_y_cm + shiftY,
+      })),
+    };
+  }
   return balanceUniformLoad(load) ?? balanceExistingRows(load);
 };
 

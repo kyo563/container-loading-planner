@@ -151,7 +151,7 @@ describe("validatePlan", () => {
     expect(result.decision_reasons.join(" ")).toContain("貨物重量差");
   });
 
-  it("同寸法貨物を左右へ分けてコンテナ内重心を中央へ寄せる", () => {
+  it("同寸法貨物を左右へ分けてトラックサイド側へ隙間なく寄せる", () => {
     const rows = [0, 1].map((index) => cargo({
       uid: `spatial-${index}`,
       id: `S${index + 1}`,
@@ -166,8 +166,12 @@ describe("validatePlan", () => {
     const yPositions = new Set(load.placements.map((placement) => placement.placed_y_cm));
     const audit = result.bias_by_container.get(containerKey("40HC", 1));
     expect(yPositions.size).toBe(2);
+    expect(load.placements.every((placement) => placement.placed_x_cm === 0)).toBe(true);
     expect(audit?.offset_y_pct).toBeLessThan(0.1);
-    expect(audit?.offset_x_pct).toBeLessThan(0.1);
+    expect(audit?.offset_x_pct).toBeGreaterThan(20);
+    expect(audit?.bias_warn).toBe(false);
+    expect(audit?.bias_reason).toContain("積載効率優先の努力目標");
+    expect(result.decision_reasons.join(" ")).toContain("トラックサイド側から隙間なく");
   });
 
   it("段積み可能でも床面に余裕がある間は平置きを優先する", () => {
