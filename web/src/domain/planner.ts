@@ -12,6 +12,7 @@ import type {
 } from "./types";
 import { ceilTo } from "./rounding";
 import { assertValidPlanningInput } from "./validation";
+import { cargoCenterOfGravity, splitWeightAcrossMidpoint } from "./weightBalance";
 
 const keyFor = (type: string, index: number): string => `${type}-${index}`;
 
@@ -169,24 +170,31 @@ export const computeBias = (load: ContainerLoad, thresholdPct: number): BiasMetr
   }
   const halfL = load.spec.inner_L_cm / 2;
   const halfW = load.spec.inner_W_cm / 2;
-  let weightedX = 0;
-  let weightedY = 0;
   let front = 0;
   let rear = 0;
   let left = 0;
   let right = 0;
   for (const placement of load.placements) {
-    const centerX = placement.placed_x_cm + placement.orient_L_cm / 2;
-    const centerY = placement.placed_y_cm + placement.orient_W_cm / 2;
-    weightedX += placement.piece.weight_kg * centerX;
-    weightedY += placement.piece.weight_kg * centerY;
-    if (centerX <= halfL) front += placement.piece.weight_kg;
-    else rear += placement.piece.weight_kg;
-    if (centerY <= halfW) left += placement.piece.weight_kg;
-    else right += placement.piece.weight_kg;
+    const frontRearSplit = splitWeightAcrossMidpoint(
+      placement.placed_x_cm,
+      placement.orient_L_cm,
+      halfL,
+      placement.piece.weight_kg,
+    );
+    const leftRightSplit = splitWeightAcrossMidpoint(
+      placement.placed_y_cm,
+      placement.orient_W_cm,
+      halfW,
+      placement.piece.weight_kg,
+    );
+    front += frontRearSplit.beforeKg;
+    rear += frontRearSplit.afterKg;
+    left += leftRightSplit.beforeKg;
+    right += leftRightSplit.afterKg;
   }
-  const offsetX = ceilTo((Math.abs(weightedX / totalWeight - halfL) / halfL) * 100, 0.001);
-  const offsetY = ceilTo((Math.abs(weightedY / totalWeight - halfW) / halfW) * 100, 0.001);
+  const centerOfGravity = cargoCenterOfGravity(load);
+  const offsetX = ceilTo((Math.abs((centerOfGravity?.xCm ?? halfL) - halfL) / halfL) * 100, 0.001);
+  const offsetY = ceilTo((Math.abs((centerOfGravity?.yCm ?? halfW) - halfW) / halfW) * 100, 0.001);
   const frontRear = ceilTo((Math.abs(front - rear) / (totalWeight / 2)) * 100, 0.001);
   const leftRight = ceilTo((Math.abs(left - right) / (totalWeight / 2)) * 100, 0.001);
   const reasons: string[] = [];
