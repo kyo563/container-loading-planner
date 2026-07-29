@@ -72,11 +72,15 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const selectedKpi = kpis.find((kpi) => kpi.container_key === selectedKey) ?? kpis[0];
   const selectedBias = selectedLoad ? result.bias_by_container.get(containerKey(selectedLoad.spec.type, selectedLoad.index)) : undefined;
   const selectedWeight = selectedLoad ? result.weight_audit_by_container.get(containerKey(selectedLoad.spec.type, selectedLoad.index)) : undefined;
+  const selectedRoad = selectedLoad ? roadAssessments.get(containerKey(selectedLoad.spec.type, selectedLoad.index)) : undefined;
   const allPieces = result.placements.length + result.unplaced.length;
   const totalM3 = [...result.placements.map((placement) => placement.piece), ...result.unplaced].reduce((sum, piece) => sum + piece.m3, 0);
   const totalWeight = [...result.placements.map((placement) => placement.piece), ...result.unplaced].reduce((sum, piece) => sum + piece.weight_kg, 0);
   const oogEntries = [...result.oog_results.entries()].filter(([, oog]) => oog.oog_flag || !oog.door_passable);
-  const warningCount = kpis.filter((kpi) => kpi.bias_warn || kpi.weight_alert).length + result.unplaced.length;
+  const warningCount = kpis.filter((kpi) => {
+    const road = roadAssessments.get(kpi.container_key);
+    return kpi.bias_warn || kpi.weight_alert || road?.chassisLevel === "warning" || Boolean(road?.specialPermitMessage);
+  }).length + result.unplaced.length;
   const printQrParts = [...printPlanQrParts, ...printSpecsQrParts];
   const printQrInstruction = printQrParts.length > 1
     ? `${printQrParts.length}枚のQRをLoadPilotの「QR読込」で順不同に読み取ってください${printBundleId ? `（カスタム仕様の照合ID: ${printBundleId}）` : ""}。`
@@ -178,11 +182,12 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
             {result.loads.map((load) => {
               const key = containerKey(load.spec.type, load.index);
               const kpi = kpis.find((item) => item.container_key === key);
+              const road = roadAssessments.get(key);
               return (
                 <button key={key} className={key === selectedKey ? "container-list-item active" : "container-list-item"} onClick={() => setSelectedKey(key)}>
                   <span className="container-type-icon">{load.spec.type.slice(0, 2)}</span>
                   <span><strong>{containerLabel(load)}</strong><small>{load.placements.length} pcs · {fmt(kpi?.total_m3 ?? 0, 2)} m³</small></span>
-                  {(kpi?.bias_warn || kpi?.weight_alert) && <AlertTriangle size={16} className="warning-icon" />}
+                  {(kpi?.bias_warn || kpi?.weight_alert || Boolean(road && road.chassisLevel !== "ok") || Boolean(road?.specialPermitMessage)) && <AlertTriangle size={16} className="warning-icon" />}
                   <ChevronRight size={16} />
                 </button>
               );
@@ -219,11 +224,14 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
               </div>
               <div>
                 <span>総重量目安</span><strong>{fmtInt(selectedWeight?.gross_weight_kg ?? 0)} kg</strong>
-                <small>貨物＋風袋（陸送条件は別途確認）</small>
+                <small>{selectedRoad?.chassisLevel === "ok" ? "貨物＋風袋（2軸シャーシ範囲内）" : selectedRoad?.chassisLevel === "caution" ? "貨物＋風袋（要三軸シャーシ）" : "貨物＋風袋（輸送方法を要確認）"}</small>
               </div>
             </div>
-            {(selectedBias?.bias_warn || selectedWeight?.weight_alert) && (
-              <div className="container-warning"><AlertTriangle size={18} /><div><strong>このコンテナは要確認です</strong><p>{[selectedBias?.bias_reason, selectedWeight?.weight_alert_message].filter(Boolean).join(" / ")}</p></div></div>
+            {(selectedBias?.bias_warn || selectedWeight?.weight_alert || selectedRoad?.chassisLevel === "warning") && (
+              <div className="container-warning container-warning-danger"><AlertTriangle size={18} /><div><strong>このコンテナは要確認です</strong><p>{[selectedBias?.bias_reason, selectedWeight?.weight_alert_message, selectedRoad?.chassisLevel === "warning" ? selectedRoad.chassisMessage : undefined].filter(Boolean).join(" / ")}</p></div></div>
+            )}
+            {selectedRoad?.chassisLevel === "caution" && (
+              <div className="container-warning chassis-caution"><AlertTriangle size={18} /><div><strong>注意：要三軸シャーシ</strong><p>{selectedRoad.chassisMessage}</p></div></div>
             )}
           </article>
         </div>
@@ -266,7 +274,10 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
         <div className={containerReportView === "summary" ? "container-report-summary" : "container-report-summary report-view-hidden"}><div className="table-shell"><table className="data-table result-table"><thead><tr><th>コンテナ</th><th>pcs</th><th>F/T</th><th>M³</th><th>貨物重量</th><th>平均床荷重</th><th>Payload</th><th>容積</th><th>国内陸送・法令確認</th><th>監査</th></tr></thead><tbody>
           {kpis.map((kpi) => {
             const road = roadAssessments.get(kpi.container_key);
-            return <tr key={kpi.container_key}><td><strong>{kpi.container_label}</strong></td><td>{kpi.piece_count}</td><td>{fmt(kpi.total_ft, 3)}</td><td>{fmt(kpi.total_m3, 3)}</td><td>{fmtInt(kpi.total_gross_kg)} kg</td><td>{fmtInt(road?.averageFloorLoadKgM2 ?? 0)} kg/m²<small className="cell-note">貨物重量÷内寸床面積</small></td><td>{fmt(kpi.payload_ratio_pct, 1)}%</td><td>{fmt(kpi.volume_ratio_pct, 1)}%</td><td className="transport-check-cell"><strong>{road?.chassisMessage}</strong>{road?.specialPermitMessage && <small>{road.specialPermitMessage}</small>}{road?.escortMessage && <small>{road.escortMessage}</small>}</td><td>{kpi.bias_warn || kpi.weight_alert || Boolean(road?.specialPermitMessage) ? <span className="status-chip red">要確認</span> : <span className="status-chip green">範囲内</span>}</td></tr>;
+            const requiresReview = kpi.bias_warn || kpi.weight_alert || road?.chassisLevel === "warning" || Boolean(road?.specialPermitMessage);
+            const requiresThreeAxle = road?.chassisLevel === "caution";
+            const chassisMessageClass = road?.chassisLevel === "caution" ? "transport-caution" : road?.chassisLevel === "warning" ? "transport-warning" : undefined;
+            return <tr key={kpi.container_key}><td><strong>{kpi.container_label}</strong></td><td>{kpi.piece_count}</td><td>{fmt(kpi.total_ft, 3)}</td><td>{fmt(kpi.total_m3, 3)}</td><td>{fmtInt(kpi.total_gross_kg)} kg</td><td>{fmtInt(road?.averageFloorLoadKgM2 ?? 0)} kg/m²<small className="cell-note">貨物重量÷内寸床面積</small></td><td>{fmt(kpi.payload_ratio_pct, 1)}%</td><td>{fmt(kpi.volume_ratio_pct, 1)}%</td><td className="transport-check-cell"><strong className={chassisMessageClass}>{road?.chassisMessage}</strong>{road?.specialPermitMessage && <small>{road.specialPermitMessage}</small>}{road?.escortMessage && <small>{road.escortMessage}</small>}</td><td className="audit-status-cell">{requiresReview && <span className="status-chip red">要確認</span>}{requiresThreeAxle && <span className="status-chip amber">注意：要三軸シャーシ</span>}{!requiresReview && !requiresThreeAxle && <span className="status-chip green">範囲内</span>}</td></tr>;
           })}
         </tbody><tfoot><tr><td><strong>積載済み総計</strong></td><td><strong>{loadedTotals.pieces}</strong></td><td><strong>{fmt(loadedTotals.ft, 3)}</strong></td><td><strong>{fmt(loadedTotals.m3, 3)}</strong></td><td><strong>{fmtInt(loadedTotals.weight)} kg</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr></tfoot></table></div></div>
         <div className={containerReportView === "packing" ? "packing-list-view" : "packing-list-view report-view-hidden"}>
