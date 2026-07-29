@@ -445,8 +445,8 @@ export function ContainerLayout({ load, oogResults }: ContainerLayoutProps) {
         strokeWidth="4"
         pointerEvents="none"
       />
-      <text x="4" y={minWidth - paddingY * LAYOUT_HEADER_OFFSET_RATIO} fontSize="18" fontWeight="700" fill="#17324a">FRONT / DOOR</text>
-      <text x={load.spec.inner_L_cm - 4} y={minWidth - paddingY * LAYOUT_HEADER_OFFSET_RATIO} textAnchor="end" fontSize="18" fill="#62768a">INNER {load.spec.inner_L_cm} × {load.spec.inner_W_cm} cm</text>
+      <text x="4" y={minWidth - paddingY * LAYOUT_HEADER_OFFSET_RATIO} fontSize="18" fontWeight="700" fill="#17324a">FRONT / TRUCK SIDE</text>
+      <text x={load.spec.inner_L_cm - 4} y={minWidth - paddingY * LAYOUT_HEADER_OFFSET_RATIO} textAnchor="end" fontSize="18" fill="#62768a">DOOR SIDE · INNER {load.spec.inner_L_cm} × {load.spec.inner_W_cm} cm</text>
     </svg>
     {(stackGroups.length > 0 || legends.length > 0 || hasTruncatedWidth) && (
       <figcaption className="layout-annotation-summary" aria-label="積載注釈">

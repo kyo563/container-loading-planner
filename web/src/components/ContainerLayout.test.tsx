@@ -85,6 +85,8 @@ describe("ContainerLayout OW表示", () => {
     expect(markup).toContain('class="cargo-center-of-gravity"');
     expect(markup).toContain("貨物重心 X 580cm、Y 120cm");
     expect(markup).toContain(">貨物重心</text>");
+    expect(markup).toContain("FRONT / TRUCK SIDE");
+    expect(markup).toContain("DOOR SIDE · INNER");
   });
 
   it("極端なOWは描画幅だけを打ち切り、実超過量と省略記号を表示する", () => {
