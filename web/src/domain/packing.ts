@@ -11,6 +11,10 @@ const MAX_BALANCE_SWAP_PASSES = 8;
 const MAX_LOAD_BALANCE_MOVES_PER_PIECE = 2;
 const MAX_LOAD_BALANCE_CANDIDATES = 64;
 const MAX_LOAD_BALANCE_SWAPS = 64;
+// バランス評価が5点以上改善する場合だけ前後順を変更し、軽微な差では荷役順を優先する。
+const MIN_FRONT_REAR_REORDER_IMPROVEMENT_SCORE = 5;
+// 2本の平均貨物重量に対する差が40%を超える場合だけ、同一貨物グループの分割を許容する。
+const SEVERE_LOAD_WEIGHT_DIFFERENCE_RATIO = 0.4;
 
 interface PackResult {
   loads: ContainerLoad[];
@@ -284,8 +288,37 @@ interface RepackedLoadPair {
   target: ContainerLoad;
 }
 
+interface PieceGroup {
+  key: string;
+  pieces: Piece[];
+  weight: number;
+}
+
 const piecesIn = (load: ContainerLoad): Piece[] =>
   load.placements.map((placement) => placement.piece);
+
+const groupPiecesByCargo = (pieces: Piece[]): PieceGroup[] => {
+  const groups = new Map<string, Piece[]>();
+  for (const piece of pieces) {
+    groups.set(piece.orig_id, [...(groups.get(piece.orig_id) ?? []), piece]);
+  }
+  return [...groups.entries()].map(([key, grouped]) => ({
+    key,
+    pieces: grouped,
+    weight: grouped.reduce((sum, piece) => sum + piece.weight_kg, 0),
+  }));
+};
+
+const hasSevereLoadWeightDifference = (
+  source: LoadBalanceEntry,
+  target: LoadBalanceEntry,
+): boolean => {
+  const averageWeight = (source.weight + target.weight) / 2;
+  return (
+    averageWeight > EPSILON &&
+    (source.weight - target.weight) / averageWeight > SEVERE_LOAD_WEIGHT_DIFFERENCE_RATIO
+  );
+};
 
 const repackLoadPair = (
   spec: ContainerSpec,
@@ -297,6 +330,68 @@ const repackLoadPair = (
   const nextSource = repackSingleLoad(spec, sourcePieces, source.load.index);
   const nextTarget = repackSingleLoad(spec, targetPieces, target.load.index);
   return nextSource && nextTarget ? { source: nextSource, target: nextTarget } : null;
+};
+
+const tryMoveCargoGroupToLighterLoad = (
+  spec: ContainerSpec,
+  source: LoadBalanceEntry,
+  target: LoadBalanceEntry,
+): RepackedLoadPair | null => {
+  const difference = source.weight - target.weight;
+  const sourcePieces = piecesIn(source.load);
+  const candidates = groupPiecesByCargo(sourcePieces)
+    .filter((group) => group.pieces.length < sourcePieces.length)
+    .filter((group) => Math.abs(difference - 2 * group.weight) < difference)
+    .sort(
+      (a, b) =>
+        Math.abs(difference - 2 * a.weight) - Math.abs(difference - 2 * b.weight) ||
+        b.weight - a.weight ||
+        a.key.localeCompare(b.key),
+    )
+    .slice(0, MAX_LOAD_BALANCE_CANDIDATES);
+
+  for (const candidate of candidates) {
+    const nextSourcePieces = sourcePieces.filter((piece) => piece.orig_id !== candidate.key);
+    const nextTargetPieces = [...piecesIn(target.load), ...candidate.pieces];
+    const repacked = repackLoadPair(spec, source, target, nextSourcePieces, nextTargetPieces);
+    if (repacked) return repacked;
+  }
+  return null;
+};
+
+const trySwapCargoGroupsBetweenLoads = (
+  spec: ContainerSpec,
+  source: LoadBalanceEntry,
+  target: LoadBalanceEntry,
+): RepackedLoadPair | null => {
+  const difference = source.weight - target.weight;
+  const sourceGroups = groupPiecesByCargo(piecesIn(source.load))
+    .sort((a, b) => b.weight - a.weight || a.key.localeCompare(b.key))
+    .slice(0, MAX_LOAD_BALANCE_CANDIDATES);
+  const targetGroups = groupPiecesByCargo(piecesIn(target.load))
+    .sort((a, b) => a.weight - b.weight || a.key.localeCompare(b.key))
+    .slice(0, MAX_LOAD_BALANCE_CANDIDATES);
+  const swaps = sourceGroups
+    .flatMap((fromSource) => targetGroups.map((fromTarget) => ({
+      fromSource,
+      fromTarget,
+      nextDifference: Math.abs(difference - 2 * (fromSource.weight - fromTarget.weight)),
+    })))
+    .filter((swap) => swap.fromSource.weight > swap.fromTarget.weight && swap.nextDifference < difference)
+    .sort((a, b) => a.nextDifference - b.nextDifference)
+    .slice(0, MAX_LOAD_BALANCE_SWAPS);
+
+  for (const swap of swaps) {
+    const sourcePieces = piecesIn(source.load)
+      .filter((piece) => piece.orig_id !== swap.fromSource.key)
+      .concat(swap.fromTarget.pieces);
+    const targetPieces = piecesIn(target.load)
+      .filter((piece) => piece.orig_id !== swap.fromTarget.key)
+      .concat(swap.fromSource.pieces);
+    const repacked = repackLoadPair(spec, source, target, sourcePieces, targetPieces);
+    if (repacked) return repacked;
+  }
+  return null;
 };
 
 const tryMovePieceToLighterLoad = (
@@ -374,8 +469,12 @@ const rebalanceLoadsByWeight = (spec: ContainerSpec, initialLoads: ContainerLoad
       const targets = ordered.filter((entry) => entry.index !== source.index && entry.weight < source.weight).sort((a, b) => a.weight - b.weight);
       for (const target of targets) {
         const repacked =
-          tryMovePieceToLighterLoad(spec, source, target) ??
-          trySwapPiecesBetweenLoads(spec, source, target);
+          tryMoveCargoGroupToLighterLoad(spec, source, target) ??
+          trySwapCargoGroupsBetweenLoads(spec, source, target) ??
+          (hasSevereLoadWeightDifference(source, target)
+            ? tryMovePieceToLighterLoad(spec, source, target) ??
+              trySwapPiecesBetweenLoads(spec, source, target)
+            : null);
         if (!repacked) continue;
         loads[source.index] = repacked.source;
         loads[target.index] = repacked.target;
@@ -455,6 +554,7 @@ const improveBalanceSequence = <T,>(
   items: BalanceSequenceItem<T>[],
   extentCm: number,
   alignment: SequenceAlignment,
+  minimumImprovementScore = 0,
 ): BalanceSequenceItem<T>[] => {
   if (items.length <= 1) return items;
   const candidates = [
@@ -463,7 +563,8 @@ const improveBalanceSequence = <T,>(
     pendulumSequence(items, false),
   ];
   let best = candidates.reduce((selected, candidate) =>
-    sequenceBalanceScore(candidate, extentCm, alignment) + EPSILON < sequenceBalanceScore(selected, extentCm, alignment)
+    sequenceBalanceScore(candidate, extentCm, alignment) + minimumImprovementScore + EPSILON <
+      sequenceBalanceScore(selected, extentCm, alignment)
       ? candidate
       : selected,
   );
@@ -478,7 +579,7 @@ const improveBalanceSequence = <T,>(
         const candidate = [...best];
         [candidate[left], candidate[right]] = [candidate[right], candidate[left]];
         const score = sequenceBalanceScore(candidate, extentCm, alignment);
-        if (score + EPSILON < nextScore) {
+        if (score + minimumImprovementScore + EPSILON < nextScore) {
           nextBest = candidate;
           nextScore = score;
         }
@@ -578,6 +679,7 @@ const balanceExistingRows = (load: ContainerLoad): ContainerLoad => {
         })),
       load.spec.inner_L_cm,
       "start",
+      MIN_FRONT_REAR_REORDER_IMPROVEMENT_SCORE,
     );
     const placements = positionSequence(orderedClusters, load.spec.inner_L_cm, "start").flatMap(({ value: cluster, startCm }) => {
       let cursor = startCm;
@@ -640,6 +742,7 @@ const balanceUniformLoad = (load: ContainerLoad): ContainerLoad | null => {
     })),
     load.spec.inner_L_cm,
     "start",
+    MIN_FRONT_REAR_REORDER_IMPROVEMENT_SCORE,
   ).map((item) => item.value);
   const rows = Array.from({ length: rowCount }, () => [] as Placement[]);
   const rowWeights = Array.from({ length: rowCount }, () => 0);
