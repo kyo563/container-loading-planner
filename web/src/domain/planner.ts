@@ -83,7 +83,7 @@ const weightBalanceReason = (loads: ContainerLoad[]): string | null => {
   for (const load of loads) counts.set(load.spec.type, (counts.get(load.spec.type) ?? 0) + 1);
   const types = [...counts.entries()].filter(([, count]) => count > 1).map(([type]) => type);
   return types.length
-    ? `${types.join("・")}は、寸法・混載・Payload制約を満たす範囲でコンテナ間の貨物重量差を小さくするよう再配置しました。`
+    ? `${types.join("・")}は、同一貨物をまとめることを優先し、寸法・混載・Payload制約を満たす範囲でコンテナ間の貨物重量差を小さくするよう再配置しました。`
     : null;
 };
 

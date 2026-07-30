@@ -151,6 +151,74 @@ describe("validatePlan", () => {
     expect(result.decision_reasons.join(" ")).toContain("貨物重量差");
   });
 
+  it("軽微な重量差では同一貨物をコンテナ間で分割しない", () => {
+    const rows = [
+      cargo({
+        uid: "group-a",
+        id: "A",
+        qty: 2,
+        L_cm: 600,
+        W_cm: 230,
+        H_cm: 100,
+        weight_kg: 4_000,
+        stackable: false,
+      }),
+      cargo({
+        uid: "group-b",
+        id: "B",
+        qty: 2,
+        L_cm: 600,
+        W_cm: 230,
+        H_cm: 100,
+        weight_kg: 3_500,
+        stackable: false,
+      }),
+    ];
+    const result = validatePlan(expandPieces(rows), DEFAULT_CONTAINERS, { "40HC": 2 }, DEFAULT_SETTINGS);
+    const cargoIdsByLoad = result.loads.map((load) =>
+      new Set(load.placements.map((placement) => placement.piece.orig_id)));
+    const weights = result.loads
+      .map((load) => load.placements.reduce((sum, placement) => sum + placement.piece.weight_kg, 0))
+      .sort((a, b) => a - b);
+
+    expect(cargoIdsByLoad.every((cargoIds) => cargoIds.size === 1)).toBe(true);
+    expect(weights).toEqual([7_000, 8_000]);
+  });
+
+  it("極端な重量差でグループ単位の入替ができない場合だけ同一貨物の分割を許容する", () => {
+    const rows = [
+      cargo({
+        uid: "severe-a",
+        id: "A",
+        qty: 2,
+        L_cm: 600,
+        W_cm: 230,
+        H_cm: 100,
+        weight_kg: 7_000,
+        stackable: false,
+      }),
+      cargo({
+        uid: "severe-b",
+        id: "B",
+        qty: 2,
+        L_cm: 600,
+        W_cm: 230,
+        H_cm: 100,
+        weight_kg: 500,
+        stackable: false,
+      }),
+    ];
+    const result = validatePlan(expandPieces(rows), DEFAULT_CONTAINERS, { "40HC": 2 }, DEFAULT_SETTINGS);
+    const cargoIdsByLoad = result.loads.map((load) =>
+      new Set(load.placements.map((placement) => placement.piece.orig_id)));
+    const weights = result.loads
+      .map((load) => load.placements.reduce((sum, placement) => sum + placement.piece.weight_kg, 0))
+      .sort((a, b) => a - b);
+
+    expect(cargoIdsByLoad.every((cargoIds) => cargoIds.size === 2)).toBe(true);
+    expect(weights).toEqual([7_500, 7_500]);
+  });
+
   it("同寸法貨物を左右へ分けてトラックサイド側へ隙間なく寄せる", () => {
     const rows = [0, 1].map((index) => cargo({
       uid: `spatial-${index}`,

@@ -12,7 +12,7 @@ export function Guide() {
       <div className="guide-grid">
         <section className="panel guide-card">
           <div className="guide-icon green"><CheckCircle2 /></div><h2>このツールが行うこと</h2>
-          <ul><li>数量をピース単位へ展開し、回転可否を考慮します。</li><li>床面の棚割り方式で配置候補を作ります。</li><li>同型コンテナが複数ある場合、制約内で貨物重量差を小さくします。</li><li>40HCを基準にOL・OW・OHと入口通過を判定します。</li><li>冷凍・冷蔵貨物、OT、FR、在来船検討貨物を振り分けます。</li><li>重量、容積、重心偏差、上位重量物の集中を可視化します。</li><li>CSV・Excel・印刷帳票に加え、QR・URLでプランを共有できます。</li></ul>
+          <ul><li>数量をピース単位へ展開し、回転可否を考慮します。</li><li>床面の棚割り方式で配置候補を作ります。</li><li>同一貨物をなるべく一か所にまとめ、積載効率を優先して次の貨物を配置します。</li><li>同型コンテナが複数ある場合、同一貨物のまとまりを優先しながら貨物重量差を小さくします。</li><li>40HCを基準にOL・OW・OHと入口通過を判定します。</li><li>冷凍・冷蔵貨物、OT、FR、在来船検討貨物を振り分けます。</li><li>重量、容積、重心偏差、上位重量物の集中を可視化します。</li><li>CSV・Excel・印刷帳票に加え、QR・URLでプランを共有できます。</li></ul>
         </section>
         <section className="panel guide-card caution">
           <div className="guide-icon amber"><AlertTriangle /></div><h2>このツールだけでは確定できないこと</h2>
@@ -21,7 +21,7 @@ export function Guide() {
       </div>
       <section className="panel methodology">
         <div><span className="eyebrow">METHOD</span><h2>計算方式について</h2></div>
-        <p>配置計算は「最適解を数学的に保証するソルバー」ではなく、寸法の大きい貨物から棚状に配置するヒューリスティックです。複数の同型コンテナでは、配置可能性を再確認しながら貨物の移動・交換を行い、重量差を縮小します。寸法や混載制約を優先するため、完全に同じ重量になるとは限りません。</p>
+        <p>配置計算は「最適解を数学的に保証するソルバー」ではなく、寸法の大きい貨物から棚状に配置するヒューリスティックです。同一貨物はグループ単位の移動・交換を優先し、2本の平均貨物重量に対する差が40%を超える場合だけ、収まりと偏荷重を確認しながら必要最小限に分割します。前後バランスの改善が小さい場合は実務上の貨物順を維持します。寸法や混載制約を優先するため、完全に同じ重量になるとは限りません。</p>
         <div className="method-badges"><span><Weight />重量監査</span><span><Ship />OOG振分</span><span><Laptop />ブラウザ計算</span><span><Lock />外部送信なし</span></div>
       </section>
       <section className="privacy-callout"><Lock /><div><strong>入力データはサーバーへ送信しません</strong><p>ファイル読込・計算・帳票作成はブラウザ内で行います。通常の再読込では貨物データを保持しません。共有URLを作成した場合だけ、圧縮した貨物情報がURLの#以降に含まれ、そのURLを知る人が復元できます。</p></div></section>
