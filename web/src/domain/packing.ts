@@ -8,6 +8,9 @@ const EPSILON = 0.001;
 const SIDE_WEIGHT_BALANCE_FACTOR = 0.25;
 const MAX_BALANCE_SWAP_ITEMS = 32;
 const MAX_BALANCE_SWAP_PASSES = 8;
+const MAX_LOAD_BALANCE_MOVES_PER_PIECE = 2;
+const MAX_LOAD_BALANCE_CANDIDATES = 64;
+const MAX_LOAD_BALANCE_SWAPS = 64;
 
 interface PackResult {
   loads: ContainerLoad[];
@@ -270,14 +273,98 @@ const repackSingleLoad = (spec: ContainerSpec, pieces: Piece[], index: number): 
   };
 };
 
+interface LoadBalanceEntry {
+  load: ContainerLoad;
+  index: number;
+  weight: number;
+}
+
+interface RepackedLoadPair {
+  source: ContainerLoad;
+  target: ContainerLoad;
+}
+
+const piecesIn = (load: ContainerLoad): Piece[] =>
+  load.placements.map((placement) => placement.piece);
+
+const repackLoadPair = (
+  spec: ContainerSpec,
+  source: LoadBalanceEntry,
+  target: LoadBalanceEntry,
+  sourcePieces: Piece[],
+  targetPieces: Piece[],
+): RepackedLoadPair | null => {
+  const nextSource = repackSingleLoad(spec, sourcePieces, source.load.index);
+  const nextTarget = repackSingleLoad(spec, targetPieces, target.load.index);
+  return nextSource && nextTarget ? { source: nextSource, target: nextTarget } : null;
+};
+
+const tryMovePieceToLighterLoad = (
+  spec: ContainerSpec,
+  source: LoadBalanceEntry,
+  target: LoadBalanceEntry,
+): RepackedLoadPair | null => {
+  const difference = source.weight - target.weight;
+  const candidates = piecesIn(source.load)
+    .filter((piece) => Math.abs(difference - 2 * piece.weight_kg) < difference)
+    .sort(
+      (a, b) =>
+        Math.abs(difference - 2 * a.weight_kg) - Math.abs(difference - 2 * b.weight_kg) ||
+        b.weight_kg - a.weight_kg,
+    );
+
+  for (const candidate of candidates) {
+    const sourcePieces = piecesIn(source.load).filter((piece) => piece.piece_id !== candidate.piece_id);
+    const targetPieces = [...piecesIn(target.load), candidate];
+    const repacked = repackLoadPair(spec, source, target, sourcePieces, targetPieces);
+    if (repacked) return repacked;
+  }
+  return null;
+};
+
+const trySwapPiecesBetweenLoads = (
+  spec: ContainerSpec,
+  source: LoadBalanceEntry,
+  target: LoadBalanceEntry,
+): RepackedLoadPair | null => {
+  const difference = source.weight - target.weight;
+  const sourceCandidates = piecesIn(source.load)
+    .sort((a, b) => b.weight_kg - a.weight_kg)
+    .slice(0, MAX_LOAD_BALANCE_CANDIDATES);
+  const targetCandidates = piecesIn(target.load)
+    .sort((a, b) => a.weight_kg - b.weight_kg)
+    .slice(0, MAX_LOAD_BALANCE_CANDIDATES);
+  const swaps = sourceCandidates
+    .flatMap((fromSource) => targetCandidates.map((fromTarget) => ({
+      fromSource,
+      fromTarget,
+      nextDifference: Math.abs(difference - 2 * (fromSource.weight_kg - fromTarget.weight_kg)),
+    })))
+    .filter((swap) => swap.fromSource.weight_kg > swap.fromTarget.weight_kg && swap.nextDifference < difference)
+    .sort((a, b) => a.nextDifference - b.nextDifference)
+    .slice(0, MAX_LOAD_BALANCE_SWAPS);
+
+  for (const swap of swaps) {
+    const sourcePieces = piecesIn(source.load)
+      .filter((piece) => piece.piece_id !== swap.fromSource.piece_id)
+      .concat(swap.fromTarget);
+    const targetPieces = piecesIn(target.load)
+      .filter((piece) => piece.piece_id !== swap.fromTarget.piece_id)
+      .concat(swap.fromSource);
+    const repacked = repackLoadPair(spec, source, target, sourcePieces, targetPieces);
+    if (repacked) return repacked;
+  }
+  return null;
+};
+
 const rebalanceLoadsByWeight = (spec: ContainerSpec, initialLoads: ContainerLoad[]): ContainerLoad[] => {
   if (initialLoads.length < 2) return initialLoads;
   const loads = initialLoads.map((load) => ({ ...load, placements: [...load.placements] }));
   const totalPieces = loads.reduce((sum, load) => sum + load.placements.length, 0);
-  const maxMoves = Math.max(totalPieces * 2, 1);
+  const maxMoves = Math.max(totalPieces * MAX_LOAD_BALANCE_MOVES_PER_PIECE, 1);
 
   for (let move = 0; move < maxMoves; move += 1) {
-    const ordered = loads
+    const ordered: LoadBalanceEntry[] = loads
       .map((load, index) => ({ load, index, weight: cargoWeight(load) }))
       .sort((a, b) => b.weight - a.weight || a.index - b.index);
     let moved = false;
@@ -286,63 +373,14 @@ const rebalanceLoadsByWeight = (spec: ContainerSpec, initialLoads: ContainerLoad
       if (source.load.placements.length <= 1) continue;
       const targets = ordered.filter((entry) => entry.index !== source.index && entry.weight < source.weight).sort((a, b) => a.weight - b.weight);
       for (const target of targets) {
-        const difference = source.weight - target.weight;
-        const candidates = source.load.placements
-          .map((placement) => placement.piece)
-          .filter((piece) => Math.abs(difference - 2 * piece.weight_kg) < difference)
-          .sort(
-            (a, b) =>
-              Math.abs(difference - 2 * a.weight_kg) - Math.abs(difference - 2 * b.weight_kg) ||
-              b.weight_kg - a.weight_kg,
-          );
-        for (const candidate of candidates) {
-          const sourcePieces = source.load.placements.map((placement) => placement.piece).filter((piece) => piece.piece_id !== candidate.piece_id);
-          const targetPieces = [...target.load.placements.map((placement) => placement.piece), candidate];
-          const nextSource = repackSingleLoad(spec, sourcePieces, source.load.index);
-          const nextTarget = repackSingleLoad(spec, targetPieces, target.load.index);
-          if (!nextSource || !nextTarget) continue;
-          loads[source.index] = nextSource;
-          loads[target.index] = nextTarget;
-          moved = true;
-          break;
-        }
-        if (!moved) {
-          const sourceCandidates = source.load.placements
-            .map((placement) => placement.piece)
-            .sort((a, b) => b.weight_kg - a.weight_kg)
-            .slice(0, 64);
-          const targetCandidates = target.load.placements
-            .map((placement) => placement.piece)
-            .sort((a, b) => a.weight_kg - b.weight_kg)
-            .slice(0, 64);
-          const swaps = sourceCandidates
-            .flatMap((fromSource) => targetCandidates.map((fromTarget) => ({
-              fromSource,
-              fromTarget,
-              nextDifference: Math.abs(difference - 2 * (fromSource.weight_kg - fromTarget.weight_kg)),
-            })))
-            .filter((swap) => swap.fromSource.weight_kg > swap.fromTarget.weight_kg && swap.nextDifference < difference)
-            .sort((a, b) => a.nextDifference - b.nextDifference)
-            .slice(0, 64);
-          for (const swap of swaps) {
-            const sourcePieces = source.load.placements
-              .map((placement) => placement.piece)
-              .filter((piece) => piece.piece_id !== swap.fromSource.piece_id)
-              .concat(swap.fromTarget);
-            const targetPieces = target.load.placements
-              .map((placement) => placement.piece)
-              .filter((piece) => piece.piece_id !== swap.fromTarget.piece_id)
-              .concat(swap.fromSource);
-            const nextSource = repackSingleLoad(spec, sourcePieces, source.load.index);
-            const nextTarget = repackSingleLoad(spec, targetPieces, target.load.index);
-            if (!nextSource || !nextTarget) continue;
-            loads[source.index] = nextSource;
-            loads[target.index] = nextTarget;
-            moved = true;
-            break;
-          }
-        }
-        if (moved) break;
+        const repacked =
+          tryMovePieceToLighterLoad(spec, source, target) ??
+          trySwapPiecesBetweenLoads(spec, source, target);
+        if (!repacked) continue;
+        loads[source.index] = repacked.source;
+        loads[target.index] = repacked.target;
+        moved = true;
+        break;
       }
       if (moved) break;
     }
