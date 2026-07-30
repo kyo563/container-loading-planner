@@ -80,6 +80,26 @@ describe("コンテナ内重量バランス", () => {
     }
   });
 
+  it("前後バランスの改善が小さい場合はパッキングリストの貨物順を保つ", () => {
+    const packed = packPieces(STANDARD_40HC, sortPieces([
+      piece("A#1", 100, 100, 510, "A"),
+      piece("A#2", 100, 100, 510, "A"),
+      piece("B#1", 100, 100, 500, "B"),
+      piece("B#2", 100, 100, 500, "B"),
+      piece("C#1", 100, 100, 500, "C"),
+      piece("C#2", 100, 100, 500, "C"),
+    ]), 1);
+    const rows = [...new Set(packed.loads[0].placements.map((placement) => placement.placed_y_cm))]
+      .map((y) => packed.loads[0].placements
+        .filter((placement) => placement.placed_y_cm === y)
+        .sort((a, b) => a.placed_x_cm - b.placed_x_cm));
+
+    expect(packed.unplaced).toHaveLength(0);
+    for (const row of rows) {
+      expect(row.map((placement) => placement.piece.orig_id)).toEqual(["A", "B", "C"]);
+    }
+  });
+
   it("異なる貨物IDでも同寸法グループを隣接させる", () => {
     const packed = packPieces(STANDARD_40HC, sortPieces([
       piece("A#1", 100, 80, 300, "A"),
