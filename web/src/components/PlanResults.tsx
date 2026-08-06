@@ -15,7 +15,7 @@ import { PlanShare } from "./PlanShare";
 
 interface PlanResultsProps {
   result: PlanResult;
-  sharePlan: ShareablePlanState;
+  sharePlan?: ShareablePlanState;
 }
 
 export function PlanResults({ result, sharePlan }: PlanResultsProps) {
@@ -30,7 +30,7 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const [printBundleId, setPrintBundleId] = useState("");
   const [printQrError, setPrintQrError] = useState(false);
   const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
-  const [includePrintQr, setIncludePrintQr] = useState(true);
+  const [includePrintQr, setIncludePrintQr] = useState(() => Boolean(sharePlan));
   const [printInColor, setPrintInColor] = useState(false);
   const [containerReportView, setContainerReportView] = useState<"summary" | "packing">("summary");
   const [expandedPackingLists, setExpandedPackingLists] = useState<Set<string>>(() => new Set(packingLists[0] ? [packingLists[0].containerKey] : []));
@@ -52,6 +52,10 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
     setPrintSpecsQrParts([]);
     setPrintBundleId("");
     setPrintQrError(false);
+    if (!sharePlan) {
+      setIncludePrintQr(false);
+      return () => { cancelled = true; };
+    }
     void createPlanQrBundleData(sharePlan, PRINT_QR_PX).then((qr) => {
       if (!cancelled) {
         setPrintPlanQrParts(qr.planParts);
@@ -73,6 +77,9 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const selectedBias = selectedLoad ? result.bias_by_container.get(containerKey(selectedLoad.spec.type, selectedLoad.index)) : undefined;
   const selectedWeight = selectedLoad ? result.weight_audit_by_container.get(containerKey(selectedLoad.spec.type, selectedLoad.index)) : undefined;
   const selectedRoad = selectedLoad ? roadAssessments.get(containerKey(selectedLoad.spec.type, selectedLoad.index)) : undefined;
+  const selectedSubstitution = selectedLoad
+    ? result.substitution_by_container.get(containerKey(selectedLoad.spec.type, selectedLoad.index))
+    : undefined;
   const allPieces = result.placements.length + result.unplaced.length;
   const totalM3 = [...result.placements.map((placement) => placement.piece), ...result.unplaced].reduce((sum, piece) => sum + piece.m3, 0);
   const totalWeight = [...result.placements.map((placement) => placement.piece), ...result.unplaced].reduce((sum, piece) => sum + piece.weight_kg, 0);
@@ -82,7 +89,9 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
     return kpi.bias_warn || kpi.weight_alert || road?.chassisLevel === "warning" || Boolean(road?.specialPermitMessage);
   }).length + result.unplaced.length;
   const printQrParts = [...printPlanQrParts, ...printSpecsQrParts];
-  const printQrInstruction = printQrParts.length > 1
+  const printQrInstruction = !sharePlan
+    ? ""
+    : printQrParts.length > 1
     ? `${printQrParts.length}枚のQRをLoadPilotの「QR読込」で順不同に読み取ってください${printBundleId ? `（カスタム仕様の照合ID: ${printBundleId}）` : ""}。`
     : "QRを読み取ると、貨物情報・計算条件を復元して再編集できます。";
   const printResultClassName = [
@@ -138,11 +147,11 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
       <div className="results-heading">
         <div>
           <span className="eyebrow">PLANNING RESULT</span>
-          <h2>{result.mode === "estimate" ? "推奨コンテナ構成" : "指定本数での積載検証"}</h2>
-          <p>配置はヒューリスティック計算による計画案です。警告と積載不可貨物を必ず確認してください。</p>
+          <h2>{result.mode === "estimate" ? "推奨コンテナ構成" : result.mode === "validate" ? "指定本数での積載検証" : "手動バン詰めプラン・CLP"}</h2>
+          <p>{result.mode === "manual" ? "手動で指定した配置を集計しました。警告と未配置貨物を確認してからCLPを確定してください。" : "配置はヒューリスティック計算による計画案です。警告と積載不可貨物を必ず確認してください。"}</p>
         </div>
         <div className="result-actions no-print">
-          <PlanShare plan={sharePlan} />
+          {sharePlan && <PlanShare plan={sharePlan} />}
           <button className="button secondary" onClick={() => void runExport(() => exportPlacementsCsv(result))}><Download size={16} />CSV</button>
           <button className="button secondary" onClick={() => void runExport(() => exportExcelReport(result))}><FileSpreadsheet size={16} />Excel帳票</button>
           <button className="button secondary" onClick={() => setPrintOptionsOpen(true)}><Printer size={16} />印刷 / PDF</button>
@@ -199,6 +208,15 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
               <div className="detail-badges"><span>{selectedLoad.placements.length} PCS</span><span>{fmt(selectedKpi.total_m3, 2)} M³</span></div>
             </div>
             <div className="layout-stage"><ContainerLayout load={selectedLoad} oogResults={result.oog_results} /></div>
+            {selectedSubstitution && (
+              <div className={selectedSubstitution.feasible ? "substitution-status feasible" : "substitution-status blocked"}>
+                {selectedSubstitution.feasible ? <Check size={18} /> : <AlertTriangle size={18} />}
+                <div>
+                  <strong>40GP代用：{selectedSubstitution.feasible ? "可能" : "不可"}</strong>
+                  <p>{selectedSubstitution.reasons.join(" / ")}</p>
+                </div>
+              </div>
+            )}
             {selectedLoad.placements.some((placement) => result.oog_results.get(placement.piece.piece_id)?.oog_flag) && (
               <div className="layout-oog-summary">
                 {selectedLoad.placements.filter((placement) => result.oog_results.get(placement.piece.piece_id)?.oog_flag).map((placement) => {
@@ -243,10 +261,12 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
           const kpi = kpis.find((item) => item.container_key === key);
           const bias = result.bias_by_container.get(key);
           const weight = result.weight_audit_by_container.get(key);
+          const substitution = result.substitution_by_container.get(key);
           return (
             <article key={key} className="print-layout-card">
               <div><h3>{containerLabel(load)}</h3><p>総個数: {load.placements.length} PCS　/　総重量: {fmtInt(kpi?.total_gross_kg ?? 0)} kg　/　総容積: {fmt(kpi?.total_m3 ?? 0, 3)} m³</p></div>
               <ContainerLayout load={load} oogResults={result.oog_results} />
+              {substitution && <p><strong>40GP代用：{substitution.feasible ? "可能" : "不可"}</strong>　{substitution.reasons.join(" / ")}</p>}
               {load.placements.filter((placement) => result.oog_results.get(placement.piece.piece_id)?.oog_flag).map((placement) => {
                 const metrics = oogMetricsFor(placement.piece.piece_id);
                 return <p key={placement.piece.piece_id}><strong>{placement.piece.piece_id}</strong>　OW合計 +{fmt(metrics.owTotalCm, 1)}cm（左 +{fmt(metrics.owLeftCm, 1)} / 右 +{fmt(metrics.owRightCm, 1)}cm）・ OH +{fmt(metrics.ohCm, 1)}cm</p>;
@@ -338,14 +358,14 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
             </div>
             <p>印刷プレビューを開く前に、帳票へ掲載する内容と色を選択できます。</p>
             <div className="print-options-list">
-              <label className="print-option-row">
+              {sharePlan ? <label className="print-option-row">
                 <input
                   type="checkbox"
                   checked={includePrintQr}
                   onChange={(event) => setIncludePrintQr(event.target.checked)}
                 />
                 <span><strong>QRコードを掲載する</strong><small>モバイルでプランと特殊仕様を復元できます。</small></span>
-              </label>
+              </label> : <div className="print-option-note"><strong>手動配置プラン</strong><small>現在、手動配置座標のQR復元には対応していないため、QRは掲載しません。</small></div>}
               <label className="print-option-row">
                 <input
                   type="checkbox"

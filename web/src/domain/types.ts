@@ -121,8 +121,17 @@ export interface PlanningSettings {
   concentration_warn_threshold_pct: number;
 }
 
+export interface ContainerSubstitutionAssessment {
+  source_type: string;
+  target_type: string;
+  feasible: boolean;
+  reasons: string[];
+}
+
+export type PlanningMode = "estimate" | "validate" | "manual";
+
 export interface PlanResult {
-  mode: "estimate" | "validate";
+  mode: PlanningMode;
   placements: Placement[];
   loads: ContainerLoad[];
   unplaced: Piece[];
@@ -132,6 +141,7 @@ export interface PlanResult {
   special_reason_by_piece: Map<string, string>;
   decision_reasons: string[];
   breakbulk_piece_ids: string[];
+  substitution_by_container: Map<string, ContainerSubstitutionAssessment>;
   requested_counts?: Record<string, number>;
 }
 

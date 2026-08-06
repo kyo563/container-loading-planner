@@ -1,4 +1,5 @@
 import { evaluateOog, isBreakbulkRequired, isFrCargoSubstantial, requiresReefer } from "./oog";
+import { build40GpSubstitutionMap } from "./containerSubstitution";
 import { packPieces, sortPieces } from "./packing";
 import type {
   BiasMetrics,
@@ -15,7 +16,8 @@ import { assertValidPlanningInput } from "./validation";
 import { cargoCenterOfGravity, splitWeightAcrossMidpoint } from "./weightBalance";
 
 const keyFor = (type: string, index: number): string => `${type}-${index}`;
-const PRACTICAL_PACKING_REASON = "貨物はトラックサイド側から隙間なく寄せ、同一・同寸法貨物をまとめ、左右バランスを優先して配置しました。前後バランスは積載効率を損なわない範囲の努力目標です。";
+const CUBIC_CENTIMETERS_PER_CUBIC_METER = 1_000_000;
+const PRACTICAL_PACKING_REASON = "貨物は原則として大きいものからトラックサイド側（x=0）へ寄せ、小さいものをドア側へ配置し、同時に背の高い貨物から低い貨物へ続く並びを努力目標としています。高さ差100cm以上も配置不可にはせず、積載効率を保ちながら高さの近い貨物を優先しています。同一・同寸法貨物のまとまりと左右バランスも考慮しています。";
 
 const isOw = (oog: OogResult): boolean => oog.over_L_cm > 0 || oog.over_W_cm > 0;
 const isOhOnly = (oog: OogResult): boolean => oog.over_H_cm > 0 && !isOw(oog);
@@ -47,9 +49,14 @@ const chooseSpecialSpec = (
   baseType: "FR" | "OT",
   specialSpecs: ContainerSpec[],
   existing: Piece[],
+  prefer40Ft = false,
 ): ContainerSpec | undefined => {
   const candidates = specialSpecs.filter((spec) => spec.type.endsWith(baseType) && canFitSpecial(piece, spec));
   if (candidates.length <= 1) return candidates[0];
+  if (prefer40Ft) {
+    const preferred = candidates.find((spec) => spec.type.startsWith("40"));
+    if (preferred) return preferred;
+  }
   const compared = candidates
     .map((spec) => {
       const packed = packPieces(spec, sortPieces([...existing, piece]));
@@ -134,6 +141,86 @@ const packMultiType = (pieces: Piece[], specs: ContainerSpec[]): { loads: Contai
   return { loads, unplaced: remaining };
 };
 
+export interface CargoCapacityAssessment {
+  total_m3: number;
+  capacity_m3: number;
+  total_weight_kg: number;
+  payload_kg: number;
+  volume_fits: boolean;
+  weight_fits: boolean;
+}
+
+export const assessCargoCapacity = (
+  pieces: Piece[],
+  spec: ContainerSpec,
+): CargoCapacityAssessment => {
+  const totalM3 = pieces.reduce((sum, piece) => sum + piece.m3, 0);
+  const totalWeightKg = pieces.reduce((sum, piece) => sum + piece.weight_kg, 0);
+  const capacityM3 = (
+    spec.inner_L_cm * spec.inner_W_cm * spec.inner_H_cm
+  ) / CUBIC_CENTIMETERS_PER_CUBIC_METER;
+  return {
+    total_m3: totalM3,
+    capacity_m3: capacityM3,
+    total_weight_kg: totalWeightKg,
+    payload_kg: spec.max_payload_kg,
+    volume_fits: totalM3 <= capacityM3,
+    weight_fits: totalWeightKg <= spec.max_payload_kg,
+  };
+};
+
+interface StandardEstimateResult {
+  loads: ContainerLoad[];
+  unplaced: Piece[];
+  twenty_gp_capacity?: CargoCapacityAssessment;
+}
+
+const packStandardEstimate = (
+  pieces: Piece[],
+  standardSpecs: ContainerSpec[],
+): StandardEstimateResult => {
+  if (!pieces.length) return { loads: [], unplaced: [] };
+  const orderedPieces = sortPieces(pieces);
+  const twentyGp = standardSpecs.find((spec) => spec.type === "20GP");
+  const twentyGpCapacity = twentyGp ? assessCargoCapacity(orderedPieces, twentyGp) : undefined;
+  if (twentyGp) {
+    if (twentyGpCapacity?.volume_fits && twentyGpCapacity.weight_fits) {
+      const compact = packPieces(twentyGp, orderedPieces, 1);
+      if (compact.unplaced.length === 0) {
+        return {
+          ...compact,
+          twenty_gp_capacity: twentyGpCapacity,
+        };
+      }
+    }
+  }
+
+  const fortyHc = standardSpecs.find((spec) => spec.type === "40HC");
+  if (!fortyHc) {
+    return {
+      ...packMultiType(orderedPieces, standardSpecs),
+      twenty_gp_capacity: twentyGpCapacity,
+    };
+  }
+  const primary = packPieces(fortyHc, orderedPieces);
+  if (!primary.unplaced.length) {
+    return {
+      ...primary,
+      twenty_gp_capacity: twentyGpCapacity,
+    };
+  }
+
+  const fallbackSpecs = standardSpecs.filter(
+    (spec) => spec.type !== "40HC" && spec.type !== "40GP",
+  );
+  const fallback = packMultiType(primary.unplaced, fallbackSpecs);
+  return {
+    loads: [...primary.loads, ...fallback.loads],
+    unplaced: fallback.unplaced,
+    twenty_gp_capacity: twentyGpCapacity,
+  };
+};
+
 const fillSpecialLoads = (
   initialLoads: ContainerLoad[],
   initialCandidates: Piece[],
@@ -204,7 +291,7 @@ export const computeBias = (load: ContainerLoad, thresholdPct: number): BiasMetr
   if (leftRight > thresholdPct) warningReasons.push("左右重量差");
   if (offsetX > thresholdPct) effortReasons.push("前後重心偏差");
   if (frontRear > thresholdPct) effortReasons.push("前後重量差");
-  const effortNote = effortReasons.length ? `${effortReasons.join(" / ")}（積載効率優先の努力目標）` : "";
+  const effortNote = effortReasons.length ? `${effortReasons.join(" / ")}（積載順・積載効率優先の努力目標）` : "";
   return {
     bias_warn: warningReasons.length > 0,
     bias_reason: [...warningReasons, effortNote].filter(Boolean).join(" / "),
@@ -245,7 +332,7 @@ const computeWeightAudit = (load: ContainerLoad, settings: PlanningSettings): We
   };
 };
 
-const attachAudits = (
+export const auditContainerLoads = (
   loads: ContainerLoad[],
   settings: PlanningSettings,
 ): Pick<PlanResult, "bias_by_container" | "weight_audit_by_container"> => {
@@ -312,7 +399,7 @@ export const estimatePlan = (
       const existing = specialSpecs
         .filter((spec) => spec.type.endsWith("FR"))
         .flatMap((spec) => specialGroups.get(spec.type) ?? []);
-      addSpecial(chooseSpecialSpec(piece, "FR", specialSpecs, existing), piece, "長さ・幅超過（FR候補）");
+      addSpecial(chooseSpecialSpec(piece, "FR", specialSpecs, existing, true), piece, "長さ・幅超過（40FR優先）");
       continue;
     }
     const primary: "OT" | "FR" = preferOtForOh ? "OT" : "FR";
@@ -340,15 +427,30 @@ export const estimatePlan = (
   }
 
   const filled = fillSpecialLoads(specialLoads, sortPieces(ambient));
-  const standard = packMultiType(filled.remaining, standardSpecs);
+  const standard = packStandardEstimate(filled.remaining, standardSpecs);
   const loads = normalizeLoadIndices([...filled.loads, ...standard.loads]);
-  const audits = attachAudits(loads, settings);
+  const audits = auditContainerLoads(loads, settings);
   const unplacedMap = new Map<string, Piece>();
   [...breakbulk, ...unplacedSpecial, ...standard.unplaced].forEach((piece) => unplacedMap.set(piece.piece_id, piece));
   const decisionReasons: string[] = [];
   if (loads.length) decisionReasons.push(PRACTICAL_PACKING_REASON);
+  if (standard.loads.length === 1 && standard.loads[0].spec.type === "20GP" && !standard.unplaced.length) {
+    const capacity = standard.twenty_gp_capacity;
+    decisionReasons.push(capacity
+      ? `20FT判定：総容積 ${capacity.total_m3.toFixed(3)} / ${capacity.capacity_m3.toFixed(3)}m³、総重量 ${capacity.total_weight_kg.toLocaleString("ja-JP")} / ${capacity.payload_kg.toLocaleString("ja-JP")}kgが20GPの範囲内で、実配置も成立するため20GP 1本を選定しました。`
+      : "全標準貨物が20GP 1本に収まるため、余分な40FTスペースを避けて20GPを選定しました。");
+  }
+  if (loads.some((load) => load.spec.type === "40HC")) {
+    const capacity = standard.twenty_gp_capacity;
+    const capacityReason = !capacity
+      ? "20GP仕様がないため"
+      : !capacity.volume_fits || !capacity.weight_fits
+        ? `総容積 ${capacity.total_m3.toFixed(3)} / ${capacity.capacity_m3.toFixed(3)}m³、総重量 ${capacity.total_weight_kg.toLocaleString("ja-JP")} / ${capacity.payload_kg.toLocaleString("ja-JP")}kgが20GPの許容範囲を超えるため`
+        : "総容積・総重量は20GPの範囲内ですが、貨物寸法と実配置条件を満たさないため";
+    decisionReasons.push(`20FT判定：${capacityReason}40HCを基準に見積もり、40GP代用可否をバンプランごとに判定しました。`);
+  }
   if ([...specialReasons.values()].some((reason) => reason.includes("冷凍・冷蔵"))) decisionReasons.push("冷凍・冷蔵貨物はRFへ分離しました。");
-  if ([...specialReasons.values()].some((reason) => reason.includes("FR候補"))) decisionReasons.push("長さ・幅超過貨物はFRへ振り分けました。船社承認と固縛条件の確認が必要です。");
+  if ([...specialReasons.values()].some((reason) => reason.includes("40FR優先"))) decisionReasons.push("長さ・幅超過貨物は40FRを優先して振り分けました。船社承認と固縛条件の確認が必要です。");
   if ([...specialReasons.values()].some((reason) => reason.includes("OT候補"))) decisionReasons.push("高さ超過貨物はOTへ振り分けました。上方クリアランスの確認が必要です。");
   if ([...specialReasons.values()].some((reason) => reason.includes("40FR想定でも積載不可"))) decisionReasons.push("40FRのデッキ長または最大積載重量を超える貨物をコンテナ計画から除外しました。");
   if ([...specialReasons.values()].some((reason) => reason.includes("FR最小貨物基準未満"))) decisionReasons.push("小型・細長いOOG貨物はFRからの振落しリスクを考慮し、自動FR積載の対象外としました。");
@@ -365,6 +467,7 @@ export const estimatePlan = (
     special_reason_by_piece: specialReasons,
     decision_reasons: decisionReasons,
     breakbulk_piece_ids: breakbulk.map((piece) => piece.piece_id),
+    substitution_by_container: build40GpSubstitutionMap(loads, specs),
     ...audits,
   };
 };
@@ -389,7 +492,7 @@ export const validatePlan = (
     remaining = packed.unplaced;
   }
   const normalized = normalizeLoadIndices(loads);
-  const audits = attachAudits(normalized, settings);
+  const audits = auditContainerLoads(normalized, settings);
   const decisionReasons = remaining.length ? ["指定本数に収まらない貨物があります。積載不可一覧とOOG判定を確認してください。"] : [];
   if (normalized.length) decisionReasons.push(PRACTICAL_PACKING_REASON);
   const balanceReason = weightBalanceReason(normalized);
@@ -407,6 +510,7 @@ export const validatePlan = (
     special_reason_by_piece: new Map(),
     decision_reasons: decisionReasons,
     breakbulk_piece_ids: [],
+    substitution_by_container: build40GpSubstitutionMap(normalized, specs),
     requested_counts: requestedCounts,
   };
 };

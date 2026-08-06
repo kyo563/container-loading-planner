@@ -3,10 +3,11 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CONTAINERS } from "./constants";
 import { packPieces, sortPieces } from "./packing";
 import { computeBias } from "./planner";
-import type { ContainerLoad, Piece } from "./types";
+import type { ContainerLoad, Piece, Placement } from "./types";
 import { cargoCenterOfGravity, splitWeightAcrossMidpoint } from "./weightBalance";
 
 const STANDARD_40HC = DEFAULT_CONTAINERS.find((spec) => spec.type === "40HC")!;
+const FLAT_RACK_40 = DEFAULT_CONTAINERS.find((spec) => spec.type === "40FR")!;
 
 const piece = (
   pieceId: string,
@@ -32,25 +33,34 @@ const piece = (
 });
 
 describe("コンテナ内重量バランス", () => {
-  it("異寸法貨物を前詰めしたまま重量物を可能な範囲で中央へ寄せる", () => {
+  it("異寸法貨物は重量にかかわらず大きいものからトラック側へ置く", () => {
     const pieces = sortPieces([
-      piece("HEAVY", 200, 90, 9_000),
-      piece("LIGHT-A", 200, 80, 1_000),
-      piece("LIGHT-B", 200, 70, 1_000),
+      piece("LARGE-LIGHT", 200, 90, 1_000),
+      piece("MEDIUM-LIGHT", 200, 80, 1_000),
+      piece("SMALL-HEAVY", 200, 70, 9_000),
     ]);
     const packed = packPieces(STANDARD_40HC, pieces, 1);
     const load = packed.loads[0];
-    const heavy = load.placements.find((placement) => placement.piece.piece_id === "HEAVY")!;
-    const metrics = computeBias(load, 20);
+    const smallHeavy = load.placements.find((placement) => placement.piece.piece_id === "SMALL-HEAVY")!;
     const ordered = [...load.placements].sort((a, b) => a.placed_x_cm - b.placed_x_cm);
 
     expect(packed.unplaced).toHaveLength(0);
     expect(ordered.map((placement) => placement.placed_x_cm)).toEqual([0, 200, 400]);
-    expect(heavy.placed_x_cm).toBe(400);
-    expect(metrics.offset_x_pct).toBeGreaterThan(20);
-    expect(metrics.offset_y_pct).toBeLessThan(2);
-    expect(metrics.bias_warn).toBe(false);
-    expect(metrics.bias_reason).toContain("積載効率優先の努力目標");
+    expect(ordered.map((placement) => placement.piece.piece_id)).toEqual(["LARGE-LIGHT", "MEDIUM-LIGHT", "SMALL-HEAVY"]);
+    expect(smallHeavy.placed_x_cm).toBe(400);
+  });
+
+  it("長さの異なる貨物を大・中・小の順でトラック側から並べる", () => {
+    const packed = packPieces(STANDARD_40HC, sortPieces([
+      piece("SMALL", 60, 40, 500),
+      piece("LARGE", 210, 95, 500),
+      piece("MEDIUM", 120, 80, 500),
+    ]), 1);
+    const ordered = [...packed.loads[0].placements].sort((a, b) => a.placed_x_cm - b.placed_x_cm);
+
+    expect(packed.unplaced).toHaveLength(0);
+    expect(ordered.map((placement) => placement.piece.piece_id)).toEqual(["LARGE", "MEDIUM", "SMALL"]);
+    expect(ordered.map((placement) => placement.placed_x_cm)).toEqual([0, 210, 330]);
   });
 
   it("同一貨物を分断せず、各列をトラックサイド側から連続配置する", () => {
@@ -179,5 +189,29 @@ describe("コンテナ内重量バランス", () => {
     expect(metrics.front_rear_diff_pct).toBeLessThan(0.1);
     expect(metrics.left_right_diff_pct).toBeLessThan(0.1);
     expect(metrics.bias_warn).toBe(false);
+  });
+
+  it("FRは重量物を中央へ寄せ、同寸法貨物を中心から点対称に置く", () => {
+    const packed = packPieces(FLAT_RACK_40, sortPieces([
+      piece("HEAVY", 100, 100, 10_000),
+      piece("LIGHT-A", 100, 100, 1_000),
+      piece("LIGHT-B", 100, 100, 1_000),
+    ]), 1);
+    const load = packed.loads[0];
+    const byId = new Map(load.placements.map((placement) => [placement.piece.piece_id, placement]));
+    const heavy = byId.get("HEAVY")!;
+    const lightA = byId.get("LIGHT-A")!;
+    const lightB = byId.get("LIGHT-B")!;
+    const midpointX = FLAT_RACK_40.inner_L_cm / 2;
+    const midpointY = FLAT_RACK_40.inner_W_cm / 2;
+    const centerX = (placement: Placement) => placement.placed_x_cm + placement.orient_L_cm / 2;
+    const centerY = (placement: Placement) => placement.placed_y_cm + placement.orient_W_cm / 2;
+
+    expect(packed.unplaced).toHaveLength(0);
+    expect(centerX(heavy)).toBeCloseTo(midpointX);
+    expect(centerX(lightA) + centerX(lightB)).toBeCloseTo(midpointX * 2);
+    expect(load.placements.every((placement) => Math.abs(centerY(placement) - midpointY) < 0.001)).toBe(true);
+    expect(cargoCenterOfGravity(load)?.xCm).toBeCloseTo(midpointX);
+    expect(cargoCenterOfGravity(load)?.yCm).toBeCloseTo(midpointY);
   });
 });

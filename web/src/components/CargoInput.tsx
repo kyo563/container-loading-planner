@@ -1,5 +1,5 @@
 import { Download, FileDown, FileSpreadsheet, Plus, RotateCcw, Trash2, Upload, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { EMPTY_CARGO, SAMPLE_CARGO } from "../domain/constants";
 import { downloadBlankTemplate, parseCargoFile, parseCargoText } from "../domain/input";
@@ -17,12 +17,27 @@ type EditableField = Exclude<keyof CargoRow, "uid">;
 
 const NUMBER_FIELDS = new Set<EditableField>(["qty", "L_cm", "W_cm", "H_cm", "weight_kg", "max_stack_load_kg"]);
 
+export const retainExistingSelection = (
+  selected: ReadonlySet<string>,
+  rows: ReadonlyArray<Pick<CargoRow, "uid">>,
+): Set<string> => {
+  const rowIds = new Set(rows.map((row) => row.uid));
+  return new Set([...selected].filter((uid) => rowIds.has(uid)));
+};
+
 export function CargoInput({ rows, issues, onChange, isSample }: CargoInputProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+
+  useEffect(() => {
+    setSelected((current) => {
+      const next = retainExistingSelection(current, rows);
+      return next.size === current.size ? current : next;
+    });
+  }, [rows]);
 
   const issueFor = (rowIndex: number, field: EditableField) =>
     issues.some((issue) => issue.row === rowIndex + 1 && issue.field === field);

@@ -116,7 +116,7 @@ export const SAMPLE_CARGO: CargoRow[] = [
   {
     uid: "sample-a1001",
     id: "A1001",
-    desc: "Steel Coil",
+    desc: "サンプル1",
     qty: 2,
     L_cm: 120,
     W_cm: 120,
@@ -131,7 +131,7 @@ export const SAMPLE_CARGO: CargoRow[] = [
   {
     uid: "sample-b2001",
     id: "B2001",
-    desc: "Carton Boxes",
+    desc: "サンプル2",
     qty: 5,
     L_cm: 60,
     W_cm: 40,
@@ -146,7 +146,7 @@ export const SAMPLE_CARGO: CargoRow[] = [
   {
     uid: "sample-c3001",
     id: "C3001",
-    desc: "Precision Machine",
+    desc: "サンプル3",
     qty: 1,
     L_cm: 210,
     W_cm: 95,

@@ -84,7 +84,9 @@ describe("ContainerLayout OW表示", () => {
 
     expect(markup).toContain('class="cargo-center-of-gravity"');
     expect(markup).toContain("貨物重心 X 580cm、Y 120cm");
-    expect(markup).toContain(">貨物重心</text>");
+    expect(markup.match(/class="cargo-center-cross"/gu)).toHaveLength(2);
+    expect(markup).not.toContain(">貨物重心</text>");
+    expect(markup).not.toContain('fill="#a73345"');
     expect(markup).toContain("FRONT / TRUCK SIDE");
     expect(markup).toContain("DOOR SIDE · INNER");
   });

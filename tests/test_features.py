@@ -125,7 +125,7 @@ def test_constraints_can_make_piece_unplaced():
     assert len(result.unplaced) >= 1
 
 
-def test_fixed_priority_prefers_40hc_when_same_container_count():
+def test_fixed_priority_prefers_20gp_when_all_cargo_fits_one_20gp():
     df = pd.DataFrame(
         [
             {"id": "A", "desc": "cargo-a", "qty": 1, "L_cm": 180, "W_cm": 90, "H_cm": 90, "weight_kg": 100},
@@ -152,6 +152,37 @@ def test_fixed_priority_prefers_40hc_when_same_container_count():
         "FIXED_PRIORITY",
         "SINGLE_TYPE",
     )
+    assert result.summary_by_type == {"20GP": 1}
+    assert any("総容積" in reason and "総重量" in reason for reason in result.decision_reasons)
+
+
+def test_fixed_priority_uses_40hc_when_cargo_does_not_fit_20gp():
+    df = pd.DataFrame(
+        [
+            {"id": "A", "desc": "cargo-a", "qty": 1, "L_cm": 250, "W_cm": 90, "H_cm": 90, "weight_kg": 100},
+        ]
+    )
+    pieces = expand_pieces(normalize_cargo_rows(df))
+    spec_20 = _base_spec("20GP", "100")
+    spec_40hc = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("300"),
+        inner_W_cm=Decimal("120"),
+        inner_H_cm=Decimal("120"),
+        max_payload_kg=Decimal("1000"),
+        cost=Decimal("130"),
+    )
+
+    result = estimate(
+        pieces,
+        [spec_20, spec_40hc],
+        spec_40hc,
+        Decimal("20"),
+        "FIXED_PRIORITY",
+        "SINGLE_TYPE",
+    )
+
     assert result.summary_by_type == {"40HC": 1}
 
 
@@ -360,6 +391,143 @@ def test_packing_requires_width_and_height_clearance():
     assert len(result.unplaced) == 1
 
 
+def test_packing_keeps_large_cargo_first_and_groups_similar_heights():
+    pieces = expand_pieces(
+        normalize_cargo_rows(
+            pd.DataFrame([
+                {
+                    "id": "TALL-LARGE",
+                    "desc": "tall-large",
+                    "qty": 1,
+                    "L_cm": 220,
+                    "W_cm": 80,
+                    "H_cm": 220,
+                    "weight_kg": 500,
+                    "rotate_allowed": False,
+                    "stackable": True,
+                },
+                {
+                    "id": "SHORT-MEDIUM",
+                    "desc": "short-medium",
+                    "qty": 1,
+                    "L_cm": 200,
+                    "W_cm": 80,
+                    "H_cm": 100,
+                    "weight_kg": 500,
+                    "rotate_allowed": False,
+                    "stackable": True,
+                },
+                {
+                    "id": "TALL-SMALL",
+                    "desc": "tall-small",
+                    "qty": 1,
+                    "L_cm": 180,
+                    "W_cm": 80,
+                    "H_cm": 210,
+                    "weight_kg": 500,
+                    "rotate_allowed": False,
+                    "stackable": True,
+                },
+            ])
+        )
+    )
+    spec = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("1200"),
+        inner_W_cm=Decimal("235"),
+        inner_H_cm=Decimal("269"),
+        max_payload_kg=Decimal("28000"),
+    )
+
+    result = pack_pieces(spec, pieces, max_containers=1)
+
+    assert [placement.piece.orig_id for placement in result.loads[0].placements] == [
+        "TALL-LARGE",
+        "TALL-SMALL",
+        "SHORT-MEDIUM",
+    ]
+    assert not result.unplaced
+
+
+def test_packing_allows_horizontal_adjacency_at_a_100cm_height_difference():
+    def make_pieces(tall_height: int):
+        return expand_pieces(
+            normalize_cargo_rows(
+                pd.DataFrame([
+                    {
+                        "id": "TALL",
+                        "desc": "tall",
+                        "qty": 1,
+                        "L_cm": 200,
+                        "W_cm": 80,
+                        "H_cm": tall_height,
+                        "weight_kg": 500,
+                        "rotate_allowed": False,
+                        "stackable": True,
+                    },
+                    {
+                        "id": "SHORT",
+                        "desc": "short",
+                        "qty": 1,
+                        "L_cm": 200,
+                        "W_cm": 80,
+                        "H_cm": 100,
+                        "weight_kg": 500,
+                        "rotate_allowed": False,
+                        "stackable": True,
+                    },
+                ])
+            )
+        )
+
+    spec = ContainerSpec(
+        type="40HC",
+        category="STANDARD",
+        inner_L_cm=Decimal("1200"),
+        inner_W_cm=Decimal("235"),
+        inner_H_cm=Decimal("269"),
+        max_payload_kg=Decimal("28000"),
+    )
+
+    allowed = pack_pieces(spec, make_pieces(199), max_containers=1)
+    advisory = pack_pieces(spec, make_pieces(200), max_containers=1)
+
+    assert len(allowed.loads[0].placements) == 2
+    assert not allowed.unplaced
+    assert len(advisory.loads[0].placements) == 2
+    assert not advisory.unplaced
+
+
+def test_standard_packing_fills_remaining_floor_space_before_stacking():
+    pieces = expand_pieces(
+        normalize_cargo_rows(
+            pd.DataFrame([
+                {"id": "LARGE-A", "desc": "large-a", "qty": 1, "L_cm": 300, "W_cm": 100, "H_cm": 100, "weight_kg": 500, "rotate_allowed": False, "stackable": True},
+                {"id": "LARGE-B", "desc": "large-b", "qty": 1, "L_cm": 300, "W_cm": 100, "H_cm": 100, "weight_kg": 500, "rotate_allowed": False, "stackable": True},
+                {"id": "SMALL", "desc": "small", "qty": 1, "L_cm": 200, "W_cm": 100, "H_cm": 100, "weight_kg": 500, "rotate_allowed": False, "stackable": True},
+            ])
+        )
+    )
+    spec = ContainerSpec(
+        type="FLOOR-FIRST",
+        category="STANDARD",
+        inner_L_cm=Decimal("500"),
+        inner_W_cm=Decimal("101"),
+        inner_H_cm=Decimal("203"),
+        max_payload_kg=Decimal("28000"),
+    )
+
+    result = pack_pieces(spec, pieces, max_containers=1)
+    by_id = {placement.piece.orig_id: placement for placement in result.loads[0].placements}
+
+    assert not result.unplaced
+    assert by_id["LARGE-A"].placed_x_cm == Decimal("0")
+    assert by_id["SMALL"].placed_x_cm == Decimal("300")
+    assert by_id["SMALL"].placed_z_cm == Decimal("0")
+    assert by_id["LARGE-B"].placed_z_cm == Decimal("100")
+
+
 def test_oog_summary_returns_ow_each_and_oh_totals():
     piece = expand_pieces(
         normalize_cargo_rows(
@@ -416,6 +584,44 @@ def test_fr_disallows_stacking_and_small_volume_piece():
     result_stack = pack_pieces(fr_spec, [bottom, top])
     placed_ids = {pl.piece.piece_id for load in result_stack.loads for pl in load.placements}
     assert len(placed_ids) == 1
+
+
+def test_fr_centers_heavy_piece_and_places_matching_cargo_point_symmetrically():
+    pieces = expand_pieces(
+        normalize_cargo_rows(
+            pd.DataFrame([
+                {"id": "HEAVY", "desc": "heavy", "qty": 1, "L_cm": 100, "W_cm": 100, "H_cm": 250, "weight_kg": 10000, "rotate_allowed": False, "stackable": False},
+                {"id": "LIGHT-A", "desc": "light-a", "qty": 1, "L_cm": 100, "W_cm": 100, "H_cm": 250, "weight_kg": 1000, "rotate_allowed": False, "stackable": False},
+                {"id": "LIGHT-B", "desc": "light-b", "qty": 1, "L_cm": 100, "W_cm": 100, "H_cm": 250, "weight_kg": 1000, "rotate_allowed": False, "stackable": False},
+            ])
+        )
+    )
+    spec = ContainerSpec(
+        type="40FR",
+        category="SPECIAL",
+        inner_L_cm=Decimal("600"),
+        inner_W_cm=Decimal("240"),
+        inner_H_cm=Decimal("1000"),
+        deck_L_cm=Decimal("600"),
+        deck_W_cm=Decimal("240"),
+        max_payload_kg=Decimal("34000"),
+    )
+
+    result = pack_pieces(spec, pieces, max_containers=1)
+    placements = result.loads[0].placements
+    by_id = {placement.piece.orig_id: placement for placement in placements}
+    center_x = lambda placement: placement.placed_x_cm + placement.orient_L_cm / Decimal("2")
+    center_y = lambda placement: placement.placed_y_cm + placement.orient_W_cm / Decimal("2")
+    midpoint_x = spec.inner_L_cm / Decimal("2")
+    midpoint_y = spec.inner_W_cm / Decimal("2")
+    total_weight = sum((placement.piece.weight_kg for placement in placements), Decimal("0"))
+    cargo_cg_x = sum((placement.piece.weight_kg * center_x(placement) for placement in placements), Decimal("0")) / total_weight
+
+    assert not result.unplaced
+    assert center_x(by_id["HEAVY"]) == midpoint_x
+    assert center_x(by_id["LIGHT-A"]) + center_x(by_id["LIGHT-B"]) == midpoint_x * Decimal("2")
+    assert all(center_y(placement) == midpoint_y for placement in placements)
+    assert cargo_cg_x == midpoint_x
 
 
 def test_weight_audit_flags_payload_and_vehicle_limit():

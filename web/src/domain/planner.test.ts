@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, SAMPLE_CARGO } from "./constants";
 import { expandPieces } from "./input";
-import { containerKey, estimatePlan, validatePlan } from "./planner";
+import { assessCargoCapacity, containerKey, estimatePlan, validatePlan } from "./planner";
 import { oogDisplayMetrics } from "./oogDisplay";
 
 const cargo = (overrides: Partial<(typeof SAMPLE_CARGO)[number]> = {}) => ({
@@ -31,6 +31,26 @@ describe("estimatePlan", () => {
     expect(result.placements.length).toBe(pieces.length);
     expect(result.loads.length).toBeGreaterThan(0);
     expect(result.loads).toHaveLength(1);
+    expect(result.loads[0].spec.type).toBe("20GP");
+    expect(result.decision_reasons.join(" ")).toContain("総容積 5.805 / 33.081m³");
+    expect(result.decision_reasons.join(" ")).toContain("総重量 2,210 / 28,200kg");
+  });
+
+  it("総容積または総重量が20GP上限を超える場合は20GP対象外とする", () => {
+    const twentyGp = DEFAULT_CONTAINERS.find((spec) => spec.type === "20GP")!;
+    const volumeAssessment = assessCargoCapacity(
+      expandPieces([cargo({ qty: 2, L_cm: 580, W_cm: 230, H_cm: 230, weight_kg: 100 })]),
+      twentyGp,
+    );
+    const weightAssessment = assessCargoCapacity(
+      expandPieces([cargo({ L_cm: 100, W_cm: 100, H_cm: 100, weight_kg: 28_201 })]),
+      twentyGp,
+    );
+
+    expect(volumeAssessment.volume_fits).toBe(false);
+    expect(volumeAssessment.weight_fits).toBe(true);
+    expect(weightAssessment.volume_fits).toBe(true);
+    expect(weightAssessment.weight_fits).toBe(false);
   });
 
   it("インゲージの冷蔵貨物もRFへ振り分ける", () => {
@@ -45,7 +65,7 @@ describe("estimatePlan", () => {
     const pieces = expandPieces([cargo({ L_cm: 500, W_cm: 280, H_cm: 180, weight_kg: 5_000 })]);
     const result = estimatePlan(pieces, DEFAULT_CONTAINERS, DEFAULT_SETTINGS);
     expect(result.unplaced).toHaveLength(0);
-    expect(result.loads[0].spec.type).toMatch(/FR$/);
+    expect(result.loads[0].spec.type).toBe("40FR");
     expect(result.oog_results.get("T001#1")?.over_W_cm).toBeGreaterThan(0);
     const placement = result.loads[0].placements[0];
     const metrics = oogDisplayMetrics(placement, result.loads[0].spec, result.oog_results.get("T001#1"));
@@ -54,6 +74,17 @@ describe("estimatePlan", () => {
     expect(metrics.owEachCm).toBe(20);
     expect(metrics.owLeftCm).toBe(20);
     expect(metrics.owRightCm).toBe(20);
+  });
+
+  it("20FRと40FRの評価係数が同じでもOW貨物は40FRを優先する", () => {
+    const specs = DEFAULT_CONTAINERS.map((spec) =>
+      spec.type === "20FR" || spec.type === "40FR" ? { ...spec, cost: 1 } : spec);
+    const pieces = expandPieces([cargo({ L_cm: 500, W_cm: 280, H_cm: 180, weight_kg: 5_000 })]);
+
+    const result = estimatePlan(pieces, specs, DEFAULT_SETTINGS);
+
+    expect(result.loads[0].spec.type).toBe("40FR");
+    expect(result.decision_reasons.join(" ")).toContain("40FRを優先");
   });
 
   it("OH貨物をOTの床面中央へ配置する", () => {
@@ -238,8 +269,8 @@ describe("validatePlan", () => {
     expect(audit?.offset_y_pct).toBeLessThan(0.1);
     expect(audit?.offset_x_pct).toBeGreaterThan(20);
     expect(audit?.bias_warn).toBe(false);
-    expect(audit?.bias_reason).toContain("積載効率優先の努力目標");
-    expect(result.decision_reasons.join(" ")).toContain("トラックサイド側から隙間なく");
+    expect(audit?.bias_reason).toContain("積載順・積載効率優先の努力目標");
+    expect(result.decision_reasons.join(" ")).toContain("原則として大きいものからトラックサイド側（x=0）");
   });
 
   it("段積み可能でも床面に余裕がある間は平置きを優先する", () => {

@@ -5,6 +5,7 @@ import { CargoInput } from "./components/CargoInput";
 import { ContainerEditor } from "./components/ContainerEditor";
 import { Guide } from "./components/Guide";
 import { Header } from "./components/Header";
+import { ManualPlanner } from "./components/ManualPlanner";
 import { PlanResults } from "./components/PlanResults";
 import { PlanQrScanner } from "./components/PlanQrScanner";
 import { PlanSettings } from "./components/PlanSettings";
@@ -14,7 +15,7 @@ import { customContainerSpecsFromEffective, effectiveContainerSpecs } from "./do
 import { expandPieces, validateCargoRows } from "./domain/input";
 import { estimatePlan, validatePlan } from "./domain/planner";
 import { decodeSharedPlan, sharedQrKind, specsTokenFromHash, supplementalBundleId, SupplementalQrRequiredError, tokenFromHash } from "./domain/sharedPlan";
-import type { AppView, CargoRow, ContainerSpec, PlanResult, PlanningSettings, ValidationIssue } from "./domain/types";
+import type { AppView, CargoRow, ContainerSpec, Piece, PlanResult, PlanningMode, PlanningSettings, ValidationIssue } from "./domain/types";
 
 const MAX_BROWSER_PIECES = 5_000;
 const DEFAULT_COUNTS: Record<string, number> = { "20GP": 0, "40GP": 0, "40HC": 1, "20OT": 0, "40OT": 0, "20FR": 0, "40FR": 0, RF: 0 };
@@ -40,8 +41,8 @@ function PlannerPage({
   isSample: boolean;
   setIsSample: (value: boolean) => void;
   specs: ContainerSpec[];
-  mode: "estimate" | "validate";
-  setMode: (value: "estimate" | "validate") => void;
+  mode: PlanningMode;
+  setMode: (value: PlanningMode) => void;
   counts: Record<string, number>;
   setCounts: (value: Record<string, number>) => void;
   settings: PlanningSettings;
@@ -54,6 +55,8 @@ function PlannerPage({
   const [error, setError] = useState("");
   const [result, setResult] = useState<PlanResult | null>(null);
   const [calculating, setCalculating] = useState(false);
+  const [manualPieces, setManualPieces] = useState<Piece[] | null>(null);
+  const [manualSessionRevision, setManualSessionRevision] = useState(0);
   const handledRestoreRevision = useRef(0);
   const handledResetRevision = useRef(0);
 
@@ -61,11 +64,15 @@ function PlannerPage({
     setResult(null);
     setError("");
   };
+  const invalidateManualDraft = () => {
+    setManualPieces(null);
+    invalidateResult();
+  };
   const changeRows = (next: CargoRow[], source: "sample" | "user" = "user") => {
     setRows(next);
     setIsSample(source === "sample");
     setIssues([]);
-    invalidateResult();
+    invalidateManualDraft();
   };
   const calculate = () => {
     setError("");
@@ -84,7 +91,7 @@ function PlannerPage({
       setError(`合計${totalPieces.toLocaleString()}ピースです。ブラウザを停止させないため、1回の計算は${MAX_BROWSER_PIECES.toLocaleString()}ピース以下に分割してください。`);
       return;
     }
-    if (mode === "validate" && !Object.values(counts).some((count) => count > 0)) {
+    if (mode !== "estimate" && !Object.values(counts).some((count) => count > 0)) {
       setError("使用するコンテナ本数を1本以上入力してください。");
       return;
     }
@@ -96,7 +103,17 @@ function PlannerPage({
     window.setTimeout(() => {
       try {
         const pieces = expandPieces(rows);
-        const next = mode === "estimate" ? estimatePlan(pieces, specs, settings) : validatePlan(pieces, specs, counts, settings);
+        if (mode === "manual") {
+          setResult(null);
+          setManualPieces(pieces);
+          setManualSessionRevision((current) => current + 1);
+          window.setTimeout(() => document.getElementById("manual-planner")?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+          return;
+        }
+        setManualPieces(null);
+        const next = mode === "estimate"
+          ? estimatePlan(pieces, specs, settings)
+          : validatePlan(pieces, specs, counts, settings);
         setResult(next);
         window.setTimeout(() => document.getElementById("plan-results")?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
       } catch (caught) {
@@ -119,6 +136,7 @@ function PlannerPage({
     setIssues([]);
     setError("");
     setResult(null);
+    setManualPieces(null);
     setCalculating(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [resetRevision]);
@@ -147,25 +165,45 @@ function PlannerPage({
           <CargoInput rows={rows} issues={issues} onChange={changeRows} isSample={isSample} />
           <PlanSettings
             mode={mode}
-            onModeChange={(next) => { setMode(next); invalidateResult(); }}
+            onModeChange={(next) => { setMode(next); invalidateManualDraft(); }}
             specs={specs}
             counts={counts}
-            onCountsChange={(next) => { setCounts(next); invalidateResult(); }}
+            onCountsChange={(next) => { setCounts(next); invalidateManualDraft(); }}
             settings={settings}
             onSettingsChange={(next) => { setSettings(next); invalidateResult(); }}
           />
         </div>
         <section className="run-panel">
-          <div><span className="step-label"><span>3</span>計算実行</span><strong>{mode === "estimate" ? "貨物に合うコンテナ構成を算出します" : "指定した本数への収まりを検証します"}</strong><small>結果変更後は再計算が必要です。</small></div>
+          <div><span className="step-label"><span>3</span>{mode === "manual" ? "手動配置を開始" : "計算実行"}</span><strong>{mode === "estimate" ? "貨物に合うコンテナ構成を算出します" : mode === "validate" ? "指定した本数への収まりを検証します" : "選択したコンテナへ貨物を自分で配置します"}</strong><small>貨物情報やコンテナ本数を変更した場合は、プランを開始し直してください。</small></div>
           <button className="run-button" onClick={calculate} disabled={calculating}>
             {calculating ? <span className="spinner" /> : <Sparkles />}
-            {calculating ? "計算中…" : mode === "estimate" ? "必要本数を計算" : "積載プランを作成"}
+            {calculating ? "準備中…" : mode === "estimate" ? "必要本数を計算" : mode === "validate" ? "積載プランを作成" : "手動配置を開始"}
             {!calculating && <ArrowRight />}
           </button>
         </section>
         {error && <div className="global-error" role="alert"><strong>計算を実行できません</strong><p>{error}</p>{issues.length > 0 && <ul>{issues.slice(0, 5).map((issue, index) => <li key={`${issue.row}-${issue.field}-${index}`}>{issue.row}行目: {issue.message}</li>)}</ul>}</div>}
       </div>
-      {result && <div className="results-shell"><PlanResults result={result} sharePlan={{ rows, mode, counts, settings, specs }} /></div>}
+      {mode === "manual" && manualPieces && (
+        <div className="manual-shell no-print">
+          <ManualPlanner
+            key={manualSessionRevision}
+            pieces={manualPieces}
+            specs={specs}
+            counts={counts}
+            settings={settings}
+            onDraftChange={() => setResult(null)}
+            onGenerateResult={setResult}
+          />
+        </div>
+      )}
+      {result && (
+        <div className="results-shell">
+          <PlanResults
+            result={result}
+            sharePlan={result.mode === "manual" ? undefined : { rows, mode: result.mode, counts, settings, specs }}
+          />
+        </div>
+      )}
     </main>
   );
 }
@@ -176,7 +214,7 @@ export default function App() {
   const [isSample, setIsSample] = useState(true);
   const [activeCustomSpecs, setActiveCustomSpecs] = useState<ContainerSpec[]>([]);
   const specs = useMemo(() => effectiveContainerSpecs(activeCustomSpecs), [activeCustomSpecs]);
-  const [mode, setMode] = useState<"estimate" | "validate">("estimate");
+  const [mode, setMode] = useState<PlanningMode>("estimate");
   const [counts, setCounts] = useState<Record<string, number>>({ ...DEFAULT_COUNTS });
   const [settings, setSettings] = useState<PlanningSettings>({ ...DEFAULT_SETTINGS });
   const [restoreRevision, setRestoreRevision] = useState(0);
@@ -291,7 +329,7 @@ export default function App() {
         />
       )}
       {view === "guide" && <Guide />}
-      <footer className="site-footer no-print"><div><span className="brand-mark small"><Boxes size={17} /></span><strong>LoadPilot</strong></div><p>初期積載検討を支援するオープンソースツールです。最終判断は実機材・法令・運送条件を確認してください。</p><span><Lock size={14} />データは保存・送信されません</span></footer>
+      <footer className="site-footer no-print"><div><span className="brand-mark small"><Boxes size={17} /></span><strong>LoadPilot</strong></div><p>初期積載検討を支援するオープンソースツールです。最終判断は実機材・法令・運送条件を確認してください。</p><span><Lock size={14} />貨物データは外部送信されません</span></footer>
     </div>
   );
 }

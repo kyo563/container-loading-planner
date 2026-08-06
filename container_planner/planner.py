@@ -18,6 +18,8 @@ from container_planner.oog import evaluate_oog
 from container_planner.packing import pack_pieces
 from container_planner.rounding import ceil_decimal
 
+CUBIC_CENTIMETERS_PER_CUBIC_METER = Decimal("1000000")
+
 
 def sort_pieces(pieces: Iterable[Piece]) -> list[Piece]:
     return sorted(
@@ -229,6 +231,26 @@ def _pick_standard_spec(standard_specs: list[ContainerSpec], preferred: str) -> 
     return standard_specs[0] if standard_specs else None
 
 
+def _cargo_capacity_totals(pieces: list[Piece], spec: ContainerSpec) -> dict[str, Decimal | bool]:
+    if spec.inner_L_cm is None or spec.inner_W_cm is None or spec.inner_H_cm is None:
+        raise ValueError(f"{spec.type}の内寸が未設定です")
+    if spec.max_payload_kg is None:
+        raise ValueError(f"{spec.type}の最大積載重量が未設定です")
+    total_m3 = sum((piece.m3 for piece in pieces), Decimal("0"))
+    total_weight_kg = sum((piece.weight_kg for piece in pieces), Decimal("0"))
+    capacity_m3 = (
+        spec.inner_L_cm * spec.inner_W_cm * spec.inner_H_cm
+    ) / CUBIC_CENTIMETERS_PER_CUBIC_METER
+    return {
+        "total_m3": total_m3,
+        "capacity_m3": capacity_m3,
+        "total_weight_kg": total_weight_kg,
+        "payload_kg": spec.max_payload_kg,
+        "volume_fits": total_m3 <= capacity_m3,
+        "weight_fits": total_weight_kg <= spec.max_payload_kg,
+    }
+
+
 def _pick_special_spec_by_ft(special_specs: dict[str, ContainerSpec], base_type: str, prefer_40ft: bool) -> ContainerSpec | None:
     candidates = [spec for spec in special_specs.values() if spec.type.endswith(base_type)]
     if not candidates:
@@ -293,6 +315,7 @@ def _select_special_container_type(
     special_specs: dict[str, ContainerSpec],
     current_pieces: list[Piece] | None = None,
     constraints: PackingConstraints | None = None,
+    prefer_40ft: bool = False,
 ) -> str:
     if base_type not in {"FR", "OT"}:
         return base_type
@@ -306,6 +329,10 @@ def _select_special_container_type(
         return base_type
     if len(candidates) == 1:
         return candidates[0].type
+    if prefer_40ft:
+        preferred = next((spec for spec in candidates if spec.type.startswith("40")), None)
+        if preferred is not None:
+            return preferred.type
 
     existing = current_pieces or []
     compare_pieces = [*existing, piece]
@@ -476,6 +503,7 @@ def estimate(
                     special_spec_map,
                     current_pieces=_current_special_pieces_for_base(pieces_by_special_type, "FR"),
                     constraints=constraints,
+                    prefer_40ft=True,
                 )
                 reason = "長さ/幅超過（OW）"
             elif _is_oh_only_piece(oog):
@@ -517,16 +545,58 @@ def estimate(
     best = None
     decision_reasons: list[str] = []
     if mode == "FIXED_PRIORITY":
+        preferred_20gp = next((spec for spec in standard_specs if spec.type == "20GP"), None)
         preferred_40hc = _pick_standard_spec(standard_specs, "40HC")
-        if preferred_40hc:
-            loads, unplaced = _pack_with_single_type(preferred_40hc, in_gauge, constraints=constraints)
+        compact_loads: list[ContainerLoad] = []
+        compact_unplaced = list(in_gauge)
+        compact_capacity = None
+        if preferred_20gp and in_gauge:
+            compact_capacity = _cargo_capacity_totals(in_gauge, preferred_20gp)
+        if (
+            preferred_20gp
+            and in_gauge
+            and compact_capacity
+            and compact_capacity["volume_fits"]
+            and compact_capacity["weight_fits"]
+        ):
+            compact_result = pack_pieces(
+                preferred_20gp,
+                in_gauge,
+                max_containers=1,
+                constraints=constraints,
+            )
+            compact_loads = compact_result.loads
+            compact_unplaced = compact_result.unplaced
+        if not in_gauge:
+            loads, unplaced = [], []
+        elif preferred_20gp and compact_capacity and not compact_unplaced:
+            loads, unplaced = compact_loads, []
+            decision_reasons.append(
+                "20FT判定: "
+                f"総容積 {compact_capacity['total_m3']:,.3f} / {compact_capacity['capacity_m3']:,.3f}m3、"
+                f"総重量 {compact_capacity['total_weight_kg']:,.0f} / {compact_capacity['payload_kg']:,.0f}kgが"
+                "20GPの範囲内で、実配置も成立するため20GP 1本を選定"
+            )
+        elif preferred_40hc:
+            # FIXED_PRIORITYは40HCを最初の1本として使い、残貨物を下段の20GP処理へ渡す。
+            primary = pack_pieces(preferred_40hc, in_gauge, max_containers=1, constraints=constraints)
+            loads, unplaced = primary.loads, primary.unplaced
+            if compact_capacity:
+                if not compact_capacity["volume_fits"] or not compact_capacity["weight_fits"]:
+                    reason = (
+                        f"総容積 {compact_capacity['total_m3']:,.3f} / {compact_capacity['capacity_m3']:,.3f}m3、"
+                        f"総重量 {compact_capacity['total_weight_kg']:,.0f} / {compact_capacity['payload_kg']:,.0f}kgが"
+                        "20GPの許容範囲を超過"
+                    )
+                else:
+                    reason = "総容積・総重量は20GPの範囲内だが、貨物寸法と実配置条件を満たさない"
+                decision_reasons.append(f"20FT判定: {reason}ため40HCを選定")
         else:
             loads, unplaced = _pack_with_single_type(standard_specs[0], in_gauge, constraints=constraints)
 
         special_loads, unplaced = _fill_existing_special_loads(special_loads, unplaced, constraints)
 
         if unplaced:
-            preferred_20gp = _pick_standard_spec(standard_specs, "20GP")
             if preferred_20gp:
                 tail_loads, unplaced = _pack_with_single_type(preferred_20gp, unplaced, constraints=constraints)
                 loads.extend(tail_loads)

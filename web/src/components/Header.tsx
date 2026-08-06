@@ -48,10 +48,10 @@ export function Header({ current, onNavigate, onScanPlan, onNewPlan }: HeaderPro
             );
           })}
         </nav>
-        <button className="header-new-plan-button" type="button" onClick={onNewPlan}><RotateCcw size={16} /><span>新規プラン</span></button>
-        <button className="header-scan-button" type="button" onClick={onScanPlan}><Camera size={16} /><span>QR読込</span></button>
+        <button className="header-new-plan-button" type="button" aria-label="新規プラン" onClick={onNewPlan}><RotateCcw size={16} /><span>新規プラン</span></button>
+        <button className="header-scan-button" type="button" aria-label="QR読込" onClick={onScanPlan}><Camera size={16} /><span>QR読込</span></button>
         <div className="header-assurance"><ShieldCheck size={16} />データは端末内で処理</div>
-        <button className="menu-button" onClick={() => setOpen((value) => !value)} aria-label="メニューを開閉">
+        <button className="menu-button" type="button" onClick={() => setOpen((value) => !value)} aria-label="メニューを開閉" aria-expanded={open}>
           {open ? <X /> : <Menu />}
         </button>
       </div>

@@ -36,8 +36,8 @@ export function VolumeConverter() {
       </div>
       <section className="panel converter-panel">
         <div className="converter-mode">
-          <button className={mode === "dimensions" ? "active" : ""} onClick={() => setMode("dimensions")}><Box />cmディメンション</button>
-          <button className={mode === "m3" ? "active" : ""} onClick={() => setMode("m3")}><Calculator />m³を直接入力</button>
+          <button type="button" aria-pressed={mode === "dimensions"} className={mode === "dimensions" ? "active" : ""} onClick={() => setMode("dimensions")}><Box />cmディメンション</button>
+          <button type="button" aria-pressed={mode === "m3"} className={mode === "m3" ? "active" : ""} onClick={() => setMode("m3")}><Calculator />m³を直接入力</button>
         </div>
         <div className="converter-input-area">
           {mode === "dimensions" ? (

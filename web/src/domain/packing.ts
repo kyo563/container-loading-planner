@@ -4,6 +4,8 @@ import { splitWeightAcrossMidpoint } from "./weightBalance";
 
 const WIDTH_CLEARANCE_CM = 1;
 const HEIGHT_CLEARANCE_CM = 3;
+// 100cmは配置不可の境界ではなく、並び順と結果確認に使う注意目安。
+export const ADJACENT_HEIGHT_DIFFERENCE_ADVISORY_CM = 100;
 const EPSILON = 0.001;
 const SIDE_WEIGHT_BALANCE_FACTOR = 0.25;
 const MAX_BALANCE_SWAP_ITEMS = 32;
@@ -11,7 +13,9 @@ const MAX_BALANCE_SWAP_PASSES = 8;
 const MAX_LOAD_BALANCE_MOVES_PER_PIECE = 2;
 const MAX_LOAD_BALANCE_CANDIDATES = 64;
 const MAX_LOAD_BALANCE_SWAPS = 64;
-// バランス評価が5点以上改善する場合だけ前後順を変更し、軽微な差では荷役順を優先する。
+// FRは重心だけでなく、中心から見た外形の点対称性も同じ尺度で評価する。
+const FLAT_RACK_POINT_SYMMETRY_FACTOR = 1;
+// 同寸法貨物は、バランス評価が5点以上改善する場合だけ前後順を変更する。
 const MIN_FRONT_REAR_REORDER_IMPROVEMENT_SCORE = 5;
 // 2本の平均貨物重量に対する差が40%を超える場合だけ、同一貨物グループの分割を許容する。
 const SEVERE_LOAD_WEIGHT_DIFFERENCE_RATIO = 0.4;
@@ -27,6 +31,32 @@ interface FitOrientation {
   footprintW: number;
   footprintH: number;
 }
+
+const rangesOverlap = (startA: number, sizeA: number, startB: number, sizeB: number): boolean =>
+  startA < startB + sizeB - EPSILON && startA + sizeA > startB + EPSILON;
+
+const areHorizontallyAdjacent = (a: Placement, b: Placement): boolean => {
+  if (!rangesOverlap(a.placed_z_cm, a.orient_H_cm, b.placed_z_cm, b.orient_H_cm)) return false;
+  const touchesAlongX =
+    Math.abs(a.placed_x_cm + a.orient_L_cm - b.placed_x_cm) <= EPSILON ||
+    Math.abs(b.placed_x_cm + b.orient_L_cm - a.placed_x_cm) <= EPSILON;
+  const touchesAlongY =
+    Math.abs(a.placed_y_cm + a.orient_W_cm - b.placed_y_cm) <= EPSILON ||
+    Math.abs(b.placed_y_cm + b.orient_W_cm - a.placed_y_cm) <= EPSILON;
+  return (
+    (touchesAlongX && rangesOverlap(a.placed_y_cm, a.orient_W_cm, b.placed_y_cm, b.orient_W_cm)) ||
+    (touchesAlongY && rangesOverlap(a.placed_x_cm, a.orient_L_cm, b.placed_x_cm, b.orient_L_cm))
+  );
+};
+
+export const hasLargeAdjacentHeightDifference = (a: Placement, b: Placement): boolean =>
+  areHorizontallyAdjacent(a, b) &&
+  Math.abs(a.orient_H_cm - b.orient_H_cm) >= ADJACENT_HEIGHT_DIFFERENCE_ADVISORY_CM;
+
+const hasLargeHeightStep = (placements: Placement[]): boolean =>
+  placements.some((placement, index) =>
+    placements.slice(index + 1).some((other) => hasLargeAdjacentHeightDifference(placement, other)),
+  );
 
 class ShelfPacker {
   private loads: ContainerLoad[] = [];
@@ -126,10 +156,8 @@ class ShelfPacker {
     });
   }
 
-  private canStack(piece: Piece, profile: FitOrientation): boolean {
-    if (this.curZ === 0) return true;
-    if (this.isOpenEquipment()) return false;
-    const provisional: Placement = {
+  private provisionalPlacement(piece: Piece, profile: FitOrientation): Placement {
+    return {
       piece,
       container_type: this.spec.type,
       container_category: this.spec.category,
@@ -142,6 +170,11 @@ class ShelfPacker {
       orient_H_cm: profile.orientation.H_cm,
       rotation_key: profile.orientation.rotation_key,
     };
+  }
+
+  private canStack(piece: Piece, provisional: Placement): boolean {
+    if (this.curZ === 0) return true;
+    if (this.isOpenEquipment()) return false;
     const bottoms = (this.currentLoad()?.placements ?? []).filter(
       (placement) =>
         Math.abs(placement.placed_z_cm + placement.orient_H_cm - this.curZ) < EPSILON &&
@@ -160,7 +193,7 @@ class ShelfPacker {
   private canPlace(piece: Piece, profile: FitOrientation): boolean {
     if (this.totalWeight() + piece.weight_kg > this.spec.max_payload_kg) return false;
     if (this.hasIncompatibility(piece)) return false;
-    return this.canStack(piece, profile);
+    return this.canStack(piece, this.provisionalPlacement(piece, profile));
   }
 
   private startNewRow(): boolean {
@@ -184,57 +217,49 @@ class ShelfPacker {
     return true;
   }
 
-  private tryPlaceInCurrent(piece: Piece): boolean {
-    for (let positionAttempt = 0; positionAttempt < 3; positionAttempt += 1) {
-      const candidates = orientationsFor(piece)
-        .map((orientation) => this.fitProfile(orientation))
-        .filter((profile): profile is FitOrientation => profile != null)
-        .filter((profile) => this.fits(profile) && this.canPlace(piece, profile))
-        .sort((a, b) => {
-          const remainingA =
-            this.spec.inner_L_cm - (this.curX + a.footprintL) +
-            this.spec.inner_W_cm - (this.curY + a.footprintW) +
-            this.spec.inner_H_cm - (this.curZ + a.footprintH);
-          const remainingB =
-            this.spec.inner_L_cm - (this.curX + b.footprintL) +
-            this.spec.inner_W_cm - (this.curY + b.footprintW) +
-            this.spec.inner_H_cm - (this.curZ + b.footprintH);
-          return remainingA - remainingB;
-        });
-      const selected = candidates[0];
-      if (selected) {
+  private bestProfile(piece: Piece): FitOrientation | undefined {
+    return orientationsFor(piece)
+      .map((orientation) => this.fitProfile(orientation))
+      .filter((profile): profile is FitOrientation => profile != null)
+      .filter((profile) => this.fits(profile) && this.canPlace(piece, profile))
+      .sort((a, b) => {
+        const remainingA =
+          this.spec.inner_L_cm - (this.curX + a.footprintL) +
+          this.spec.inner_W_cm - (this.curY + a.footprintW) +
+          this.spec.inner_H_cm - (this.curZ + a.footprintH);
+        const remainingB =
+          this.spec.inner_L_cm - (this.curX + b.footprintL) +
+          this.spec.inner_W_cm - (this.curY + b.footprintW) +
+          this.spec.inner_H_cm - (this.curZ + b.footprintH);
+        return remainingA - remainingB;
+      })[0];
+  }
+
+  placeFirstFitting(pieces: Piece[]): number {
+    if (!this.currentLoad() && !this.newContainer()) return -1;
+    while (true) {
+      for (let index = 0; index < pieces.length; index += 1) {
+        const piece = pieces[index];
+        const selected = this.bestProfile(piece);
+        if (!selected) continue;
         const load = this.currentLoad();
-        if (!load) return false;
-        load.placements.push({
-          piece,
-          container_type: this.spec.type,
-          container_category: this.spec.category,
-          container_index: load.index,
-          placed_x_cm: this.curX,
-          placed_y_cm: this.curY,
-          placed_z_cm: this.curZ,
-          orient_L_cm: selected.orientation.L_cm,
-          orient_W_cm: selected.orientation.W_cm,
-          orient_H_cm: selected.orientation.H_cm,
-          rotation_key: selected.orientation.rotation_key,
-        });
+        if (!load) return -1;
+        load.placements.push(this.provisionalPlacement(piece, selected));
         this.curX += selected.footprintL;
         this.rowDepth = Math.max(this.rowDepth, selected.footprintW);
         this.layerHeight = Math.max(this.layerHeight, selected.footprintH);
-        return true;
+        return index;
       }
+      // 現在の床列に入る後続貨物がないことを確認してから次列、次段へ進む。
       if (this.startNewRow()) continue;
       if (this.startNewLayer()) continue;
-      break;
+      return -1;
     }
-    return false;
   }
 
-  place(piece: Piece): boolean {
-    if (!this.currentLoad() && !this.newContainer()) return false;
-    if (this.tryPlaceInCurrent(piece)) return true;
-    if (!this.newContainer()) return false;
-    return this.tryPlaceInCurrent(piece);
+  startNextContainer(): boolean {
+    if (!this.currentLoad()?.placements.length) return false;
+    return this.newContainer();
   }
 
   result(): ContainerLoad[] {
@@ -242,25 +267,49 @@ class ShelfPacker {
   }
 }
 
+const comparePieceLoadingPriority = (a: Piece, b: Piece): number =>
+  b.L_cm - a.L_cm ||
+  b.W_cm - a.W_cm ||
+  b.H_cm - a.H_cm ||
+  a.orig_id.localeCompare(b.orig_id) ||
+  a.piece_no - b.piece_no ||
+  b.weight_kg - a.weight_kg;
+
 export const sortPieces = (pieces: Piece[]): Piece[] =>
-  [...pieces].sort(
-    (a, b) =>
-      b.L_cm - a.L_cm ||
-      b.W_cm - a.W_cm ||
-      b.H_cm - a.H_cm ||
-      a.orig_id.localeCompare(b.orig_id) ||
-      a.piece_no - b.piece_no ||
-      b.weight_kg - a.weight_kg,
-  );
+  [...pieces].sort(comparePieceLoadingPriority);
+
+const orderPiecesByHeightContinuity = (pieces: Piece[]): Piece[] => {
+  const remaining = [...pieces];
+  const ordered: Piece[] = [];
+  while (remaining.length) {
+    let current = remaining.shift()!;
+    ordered.push(current);
+    while (remaining.length) {
+      const nextIndex = remaining.findIndex(
+        (candidate) =>
+          Math.abs(candidate.H_cm - current.H_cm) < ADJACENT_HEIGHT_DIFFERENCE_ADVISORY_CM,
+      );
+      if (nextIndex < 0) break;
+      current = remaining.splice(nextIndex, 1)[0];
+      ordered.push(current);
+    }
+  }
+  return ordered;
+};
 
 const packSequentially = (spec: ContainerSpec, pieces: Piece[], maxContainers?: number): PackResult => {
   if (maxContainers != null && maxContainers <= 0) return { loads: [], unplaced: [...pieces] };
   const packer = new ShelfPacker(spec, maxContainers);
-  const unplaced: Piece[] = [];
-  for (const piece of pieces) {
-    if (!packer.place(piece)) unplaced.push(piece);
+  const remaining = orderPiecesByHeightContinuity(pieces);
+  while (remaining.length) {
+    const placedIndex = packer.placeFirstFitting(remaining);
+    if (placedIndex >= 0) {
+      remaining.splice(placedIndex, 1);
+      continue;
+    }
+    if (!packer.startNextContainer()) break;
   }
-  return { loads: packer.result(), unplaced };
+  return { loads: packer.result(), unplaced: remaining };
 };
 
 const cargoWeight = (load: ContainerLoad): number => load.placements.reduce((sum, placement) => sum + placement.piece.weight_kg, 0);
@@ -555,6 +604,11 @@ const improveBalanceSequence = <T,>(
   extentCm: number,
   alignment: SequenceAlignment,
   minimumImprovementScore = 0,
+  scorer: (
+    candidate: BalanceSequenceItem<T>[],
+    extentCm: number,
+    alignment: SequenceAlignment,
+  ) => number = sequenceBalanceScore,
 ): BalanceSequenceItem<T>[] => {
   if (items.length <= 1) return items;
   const candidates = [
@@ -563,22 +617,22 @@ const improveBalanceSequence = <T,>(
     pendulumSequence(items, false),
   ];
   let best = candidates.reduce((selected, candidate) =>
-    sequenceBalanceScore(candidate, extentCm, alignment) + minimumImprovementScore + EPSILON <
-      sequenceBalanceScore(selected, extentCm, alignment)
+    scorer(candidate, extentCm, alignment) + minimumImprovementScore + EPSILON <
+      scorer(selected, extentCm, alignment)
       ? candidate
       : selected,
   );
   if (best.length > MAX_BALANCE_SWAP_ITEMS) return best;
 
   for (let pass = 0; pass < MAX_BALANCE_SWAP_PASSES; pass += 1) {
-    const currentScore = sequenceBalanceScore(best, extentCm, alignment);
+    const currentScore = scorer(best, extentCm, alignment);
     let nextBest = best;
     let nextScore = currentScore;
     for (let left = 0; left < best.length - 1; left += 1) {
       for (let right = left + 1; right < best.length; right += 1) {
         const candidate = [...best];
         [candidate[left], candidate[right]] = [candidate[right], candidate[left]];
-        const score = sequenceBalanceScore(candidate, extentCm, alignment);
+        const score = scorer(candidate, extentCm, alignment);
         if (score + minimumImprovementScore + EPSILON < nextScore) {
           nextBest = candidate;
           nextScore = score;
@@ -589,6 +643,34 @@ const improveBalanceSequence = <T,>(
     best = nextBest;
   }
   return best;
+};
+
+const flatRackSequenceScore = <T,>(
+  items: BalanceSequenceItem<T>[],
+  extentCm: number,
+  alignment: SequenceAlignment,
+): number => {
+  const positioned = positionSequence(items, extentCm, alignment);
+  const midpoint = extentCm / 2;
+  const pairCount = Math.floor(positioned.length / 2);
+  let pointSymmetryPenalty = 0;
+
+  for (let index = 0; index < pairCount; index += 1) {
+    const left = positioned[index];
+    const right = positioned[positioned.length - index - 1];
+    const leftCenter = left.startCm + items[index].sizeCm / 2;
+    const rightCenter = right.startCm + items[items.length - index - 1].sizeCm / 2;
+    pointSymmetryPenalty += Math.abs(leftCenter + rightCenter - 2 * midpoint) / Math.max(extentCm, EPSILON) * 100;
+  }
+  if (positioned.length % 2 === 1) {
+    const centerIndex = pairCount;
+    const center = positioned[centerIndex].startCm + items[centerIndex].sizeCm / 2;
+    pointSymmetryPenalty += Math.abs(center - midpoint) / Math.max(midpoint, EPSILON) * 100;
+  }
+
+  const normalizedSymmetryPenalty = pointSymmetryPenalty / Math.max(pairCount + (positioned.length % 2), 1);
+  return sequenceBalanceScore(items, extentCm, alignment)
+    + normalizedSymmetryPenalty * FLAT_RACK_POINT_SYMMETRY_FACTOR;
 };
 
 const positionSequence = <T,>(
@@ -663,24 +745,32 @@ const clusterPlacementGroups = (groups: PlacementGroup[]): PlacementCluster[] =>
   }));
 };
 
+const loadingPriorityPiece = (cluster: PlacementCluster): Piece =>
+  cluster.groups
+    .flatMap((group) => group.placements)
+    .map((placement) => placement.piece)
+    .reduce((priority, piece) => comparePieceLoadingPriority(piece, priority) < 0 ? piece : priority);
+
 const balanceExistingRows = (load: ContainerLoad): ContainerLoad => {
   const rows = new Map<number, Placement[]>();
   for (const placement of load.placements) {
     rows.set(placement.placed_y_cm, [...(rows.get(placement.placed_y_cm) ?? []), placement]);
   }
   const balancedRows: BalancedRow[] = [...rows.entries()].map(([key, row]) => {
-    const orderedClusters = improveBalanceSequence(
-      clusterPlacementGroups(groupPlacements([...row].sort((a, b) => a.placed_x_cm - b.placed_x_cm)))
-        .map((cluster) => ({
-          value: cluster,
-          sizeCm: cluster.lengthCm,
-          weightKg: cluster.weightKg,
-          stableKey: cluster.key,
-        })),
-      load.spec.inner_L_cm,
-      "start",
-      MIN_FRONT_REAR_REORDER_IMPROVEMENT_SCORE,
-    );
+    // x=0をトラック側とし、異寸法貨物は大きい順を重量バランス目的で入れ替えない。
+    const orderedClusters = clusterPlacementGroups(
+      groupPlacements([...row].sort((a, b) => a.placed_x_cm - b.placed_x_cm)),
+    )
+      .sort((a, b) =>
+        comparePieceLoadingPriority(loadingPriorityPiece(a), loadingPriorityPiece(b)) ||
+        a.key.localeCompare(b.key),
+      )
+      .map((cluster) => ({
+        value: cluster,
+        sizeCm: cluster.lengthCm,
+        weightKg: cluster.weightKg,
+        stableKey: cluster.key,
+      }));
     const placements = positionSequence(orderedClusters, load.spec.inner_L_cm, "start").flatMap(({ value: cluster, startCm }) => {
       let cursor = startCm;
       return cluster.groups.flatMap((group) => group.placements.map((placement) => {
@@ -769,7 +859,30 @@ const balanceUniformLoad = (load: ContainerLoad): ContainerLoad | null => {
 };
 
 const balanceSpatialPlacements = (load: ContainerLoad): ContainerLoad => {
-  if (load.spec.type.endsWith("FR") || load.spec.type.endsWith("OT")) {
+  if (load.spec.type.endsWith("FR")) {
+    const extentCm = load.spec.deck_L_cm ?? load.spec.inner_L_cm;
+    const ordered = improveBalanceSequence(
+      load.placements.map((placement) => ({
+        value: placement,
+        sizeCm: placement.orient_L_cm,
+        weightKg: placement.piece.weight_kg,
+        stableKey: placement.piece.piece_id,
+      })),
+      extentCm,
+      "center",
+      0,
+      flatRackSequenceScore,
+    );
+    return {
+      ...load,
+      placements: positionSequence(ordered, extentCm, "center").map(({ value: placement, startCm }) => ({
+        ...placement,
+        placed_x_cm: startCm,
+        placed_y_cm: (load.spec.inner_W_cm - placement.orient_W_cm) / 2,
+      })),
+    };
+  }
+  if (load.spec.type.endsWith("OT")) {
     const minX = Math.min(...load.placements.map((placement) => placement.placed_x_cm));
     const maxX = Math.max(...load.placements.map((placement) => placement.placed_x_cm + placement.orient_L_cm));
     const shiftX = Math.max(0, (load.spec.inner_L_cm - (maxX - minX)) / 2 - minX);
@@ -794,7 +907,8 @@ const balanceSpatialPlacements = (load: ContainerLoad): ContainerLoad => {
       })),
     };
   }
-  return balanceUniformLoad(load) ?? balanceExistingRows(load);
+  const balanced = balanceUniformLoad(load) ?? balanceExistingRows(load);
+  return hasLargeHeightStep(balanced.placements) ? load : balanced;
 };
 
 export const packPieces = (spec: ContainerSpec, pieces: Piece[], maxContainers?: number): PackResult => {
