@@ -18,12 +18,59 @@ interface PlanResultsProps {
   sharePlan?: ShareablePlanState;
 }
 
+const MAX_TARE_WEIGHT_KG = 100_000;
+const CONTAINER_NUMBER_LENGTH = 11;
+const MAX_SEAL_NUMBER_LENGTH = 40;
+
+interface ContainerInfoMemo {
+  containerNumber: string;
+  sealNumber: string;
+}
+
+const EMPTY_CONTAINER_INFO: ContainerInfoMemo = { containerNumber: "", sealNumber: "" };
+
+const initialTareWeights = (result: PlanResult): Record<string, number> => Object.fromEntries(
+  result.loads.map((load) => [containerKey(load.spec.type, load.index), load.spec.tare_weight_kg]),
+);
+
+const initialContainerInfo = (result: PlanResult): Record<string, ContainerInfoMemo> => Object.fromEntries(
+  result.loads.map((load) => [containerKey(load.spec.type, load.index), { ...EMPTY_CONTAINER_INFO }]),
+);
+
+const normalizeContainerNumber = (value: string): string => value
+  .toUpperCase()
+  .replace(/[^A-Z0-9]/gu, "")
+  .slice(0, CONTAINER_NUMBER_LENGTH);
+
+function PrintContainerInfo({ memo }: { memo: ContainerInfoMemo }) {
+  const containerNumberCharacters = Array.from({ length: CONTAINER_NUMBER_LENGTH }, (_, index) => memo.containerNumber[index] ?? "");
+  return (
+    <div className="print-container-info">
+      <div>
+        <span className="print-container-info-label">CONTAINER NO.</span>
+        <span className="print-container-number-boxes" aria-label="コンテナ番号記入欄">
+          {containerNumberCharacters.map((character, index) => <b className="print-container-number-box" key={index}>{character}</b>)}
+        </span>
+      </div>
+      <div>
+        <span className="print-container-info-label">SEAL NO.</span>
+        <b className="print-seal-number-line">{memo.sealNumber}</b>
+      </div>
+    </div>
+  );
+}
+
 export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const kpis = useMemo(() => buildContainerKpis(result), [result]);
   const packingLists = useMemo(() => buildContainerPackingLists(result), [result]);
-  const roadAssessments = useMemo(() => new Map(result.loads.map((load) => [containerKey(load.spec.type, load.index), assessJapanRoadTransport(load)])), [result]);
   const counts = useMemo(() => summarizeCounts(result), [result]);
   const [selectedKey, setSelectedKey] = useState(() => result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
+  const [tareWeights, setTareWeights] = useState<Record<string, number>>(() => initialTareWeights(result));
+  const [containerInfo, setContainerInfo] = useState<Record<string, ContainerInfoMemo>>(() => initialContainerInfo(result));
+  const roadAssessments = useMemo(() => new Map(result.loads.map((load) => {
+    const key = containerKey(load.spec.type, load.index);
+    return [key, assessJapanRoadTransport(load, tareWeights[key] ?? load.spec.tare_weight_kg)];
+  })), [result, tareWeights]);
   const [exportError, setExportError] = useState("");
   const [printPlanQrParts, setPrintPlanQrParts] = useState<PlanQrData[]>([]);
   const [printSpecsQrParts, setPrintSpecsQrParts] = useState<PlanQrData[]>([]);
@@ -44,6 +91,8 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   };
   useEffect(() => {
     setSelectedKey(result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
+    setTareWeights(initialTareWeights(result));
+    setContainerInfo(initialContainerInfo(result));
     setExpandedPackingLists(new Set(packingLists[0] ? [packingLists[0].containerKey] : []));
   }, [result]);
   useEffect(() => {
@@ -72,11 +121,20 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
     if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
+  const updateTareWeight = (key: string, value: number) => setTareWeights((current) => ({
+    ...current,
+    [key]: Math.min(MAX_TARE_WEIGHT_KG, Math.max(0, Number.isFinite(value) ? value : 0)),
+  }));
+  const updateContainerInfo = (key: string, field: keyof ContainerInfoMemo, value: string) => setContainerInfo((current) => ({
+    ...current,
+    [key]: { ...(current[key] ?? EMPTY_CONTAINER_INFO), [field]: value },
+  }));
   const selectedLoad = result.loads.find((load) => containerKey(load.spec.type, load.index) === selectedKey) ?? result.loads[0];
   const selectedKpi = kpis.find((kpi) => kpi.container_key === selectedKey) ?? kpis[0];
   const selectedBias = selectedLoad ? result.bias_by_container.get(containerKey(selectedLoad.spec.type, selectedLoad.index)) : undefined;
   const selectedWeight = selectedLoad ? result.weight_audit_by_container.get(containerKey(selectedLoad.spec.type, selectedLoad.index)) : undefined;
   const selectedRoad = selectedLoad ? roadAssessments.get(containerKey(selectedLoad.spec.type, selectedLoad.index)) : undefined;
+  const selectedContainerInfo = containerInfo[selectedKey] ?? EMPTY_CONTAINER_INFO;
   const selectedSubstitution = selectedLoad
     ? result.substitution_by_container.get(containerKey(selectedLoad.spec.type, selectedLoad.index))
     : undefined;
@@ -105,12 +163,18 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
       void runExport(printPlan);
     }, 0);
   };
-  const loadedTotals = useMemo(() => kpis.reduce((totals, kpi) => ({
-    pieces: totals.pieces + kpi.piece_count,
-    ft: totals.ft + kpi.total_ft,
-    m3: totals.m3 + kpi.total_m3,
-    weight: totals.weight + kpi.total_gross_kg,
-  }), { pieces: 0, ft: 0, m3: 0, weight: 0 }), [kpis]);
+  const loadedTotals = useMemo(() => kpis.reduce((totals, kpi) => {
+    const road = roadAssessments.get(kpi.container_key);
+    const tareWeight = road?.tareWeightKg ?? 0;
+    return {
+      pieces: totals.pieces + kpi.piece_count,
+      ft: totals.ft + kpi.total_ft,
+      m3: totals.m3 + kpi.total_m3,
+      netWeight: totals.netWeight + kpi.total_gross_kg,
+      tareWeight: totals.tareWeight + tareWeight,
+      grossWeight: totals.grossWeight + kpi.total_gross_kg + tareWeight,
+    };
+  }, { pieces: 0, ft: 0, m3: 0, netWeight: 0, tareWeight: 0, grossWeight: 0 }), [kpis, roadAssessments]);
   const oogMetricsFor = (pieceId: string) => {
     const load = result.loads.find((candidate) => candidate.placements.some((placement) => placement.piece.piece_id === pieceId));
     const placement = load?.placements.find((candidate) => candidate.piece.piece_id === pieceId);
@@ -152,8 +216,8 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
         </div>
         <div className="result-actions no-print">
           {sharePlan && <PlanShare plan={sharePlan} />}
-          <button className="button secondary" onClick={() => void runExport(() => exportPlacementsCsv(result))}><Download size={16} />CSV</button>
-          <button className="button secondary" onClick={() => void runExport(() => exportExcelReport(result))}><FileSpreadsheet size={16} />Excel帳票</button>
+          <button className="button secondary" onClick={() => void runExport(() => exportPlacementsCsv(result, tareWeights))}><Download size={16} />CSV</button>
+          <button className="button secondary" onClick={() => void runExport(() => exportExcelReport(result, tareWeights))}><FileSpreadsheet size={16} />Excel帳票</button>
           <button className="button secondary" onClick={() => setPrintOptionsOpen(true)}><Printer size={16} />印刷 / PDF</button>
         </div>
       </div>
@@ -176,13 +240,6 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
         <div className="metric-card"><span className="metric-icon gold"><Scale /></span><div><small>貨物合計</small><strong>{fmt(totalM3, 3)}<em>m³</em></strong><p>{fmtInt(totalWeight)} kg</p></div></div>
         <div className={`metric-card ${warningCount ? "metric-warning" : ""}`}><span className="metric-icon red"><AlertCircle /></span><div><small>要確認</small><strong>{warningCount}<em>件</em></strong><p>未配置・重量・偏荷重</p></div></div>
       </div>
-
-      {result.decision_reasons.length > 0 && (
-        <div className="decision-panel">
-          <strong>選定根拠・前提</strong>
-          <ul>{result.decision_reasons.map((reason) => <li key={reason}><ChevronRight size={15} />{reason}</li>)}</ul>
-        </div>
-      )}
 
       {selectedLoad && selectedKpi && (
         <div className="container-review-grid">
@@ -240,13 +297,37 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
                 <span>重心偏差 X / Y</span><strong>{fmt(selectedBias?.offset_x_pct ?? 0, 1)} / {fmt(selectedBias?.offset_y_pct ?? 0, 1)}%</strong>
                 <small>{selectedBias?.bias_reason || "左右・前後とも警告閾値内"}</small>
               </div>
-              <div>
-                <span>総重量目安</span><strong>{fmtInt(selectedWeight?.gross_weight_kg ?? 0)} kg</strong>
-                <small>{selectedRoad?.chassisLevel === "ok" ? "貨物＋風袋（2軸シャーシ範囲内）" : selectedRoad?.chassisLevel === "caution" ? "貨物＋風袋（要三軸シャーシ）" : "貨物＋風袋（輸送方法を要確認）"}</small>
-              </div>
             </div>
+            <div className="container-weight-summary">
+              <div><span>NET（貨物重量）</span><strong>{fmtInt(selectedRoad?.cargoWeightKg ?? selectedKpi.total_gross_kg)} kg</strong><small>積載貨物の合計</small></div>
+              <label>
+                <span>Tare（コンテナ風袋）</span>
+                <span className="tare-weight-input"><input type="number" min="0" max={MAX_TARE_WEIGHT_KG} step="1" aria-label={`${containerLabel(selectedLoad)}のTare重量`} value={selectedRoad?.tareWeightKg ?? selectedLoad.spec.tare_weight_kg} onChange={(event) => updateTareWeight(selectedKey, Number(event.target.value))} /><b>kg</b></span>
+                <small>初期値は想定値です。実Tareへ更新できます。</small>
+              </label>
+              <div><span>Gross（合計コンテナ重量）</span><strong>{fmtInt(selectedRoad?.containerGrossKg ?? 0)} kg</strong><small>NET ＋ Tare</small></div>
+            </div>
+            <section className="container-info-memo no-print" aria-labelledby="container-info-memo-title">
+              <div>
+                <span className="eyebrow">CONTAINER MEMO</span>
+                <h4 id="container-info-memo-title">コンテナ情報メモ</h4>
+                <p>実機確定後の番号を入力すると、印刷帳票の各コンテナ欄へ反映されます。</p>
+              </div>
+              <div className="container-info-fields">
+                <label>
+                  <span>コンテナ番号</span>
+                  <input type="text" maxLength={CONTAINER_NUMBER_LENGTH} autoCapitalize="characters" placeholder="例: ABCD1234567" aria-label={`${containerLabel(selectedLoad)}のコンテナ番号`} value={selectedContainerInfo.containerNumber} onChange={(event) => updateContainerInfo(selectedKey, "containerNumber", normalizeContainerNumber(event.target.value))} />
+                  <small>英数字11桁。印刷時は1文字ずつ点線枠へ表示します。</small>
+                </label>
+                <label>
+                  <span>Seal番号</span>
+                  <input type="text" maxLength={MAX_SEAL_NUMBER_LENGTH} placeholder="例: SEAL123456" aria-label={`${containerLabel(selectedLoad)}のSeal番号`} value={selectedContainerInfo.sealNumber} onChange={(event) => updateContainerInfo(selectedKey, "sealNumber", event.target.value.toUpperCase())} />
+                  <small>未入力でも手書き用の記入スペースを印刷します。</small>
+                </label>
+              </div>
+            </section>
             {(selectedBias?.bias_warn || selectedWeight?.weight_alert || selectedRoad?.chassisLevel === "warning") && (
-              <div className="container-warning"><AlertTriangle size={18} /><div><strong>このコンテナは要確認です</strong><p>{[selectedBias?.bias_reason, selectedWeight?.weight_alert_message, selectedRoad?.chassisLevel === "warning" ? selectedRoad.chassisMessage : undefined].filter(Boolean).join(" / ")}</p></div></div>
+              <div className="container-warning"><AlertTriangle size={18} /><div><strong>確認をお願いします</strong><p>{[selectedBias?.bias_reason, selectedWeight?.weight_alert_message, selectedRoad?.chassisLevel === "warning" ? selectedRoad.chassisMessage : undefined].filter(Boolean).join(" / ")}</p></div></div>
             )}
             {selectedRoad?.chassisLevel === "caution" && (
               <div className="container-warning"><AlertTriangle size={18} /><div><strong>注意：要三軸シャーシ</strong><p>{selectedRoad.chassisMessage}</p></div></div>
@@ -260,18 +341,21 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
           const key = containerKey(load.spec.type, load.index);
           const kpi = kpis.find((item) => item.container_key === key);
           const bias = result.bias_by_container.get(key);
-          const weight = result.weight_audit_by_container.get(key);
+          const road = roadAssessments.get(key);
+          const memo = containerInfo[key] ?? EMPTY_CONTAINER_INFO;
           const substitution = result.substitution_by_container.get(key);
           return (
             <article key={key} className="print-layout-card">
-              <div><h3>{containerLabel(load)}</h3><p>総個数: {load.placements.length} PCS　/　総重量: {fmtInt(kpi?.total_gross_kg ?? 0)} kg　/　総容積: {fmt(kpi?.total_m3 ?? 0, 3)} m³</p></div>
+              <div><h3>{containerLabel(load)}</h3><p>総個数: {load.placements.length} PCS　/　NET: {fmtInt(road?.cargoWeightKg ?? 0)} kg　/　Tare: {fmtInt(road?.tareWeightKg ?? 0)} kg　/　Gross: {fmtInt(road?.containerGrossKg ?? 0)} kg　/　総容積: {fmt(kpi?.total_m3 ?? 0, 3)} m³</p></div>
+              <PrintContainerInfo memo={memo} />
               <ContainerLayout load={load} oogResults={result.oog_results} />
               {substitution && <p><strong>40GP代用：{substitution.feasible ? "可能" : "不可"}</strong>　{substitution.reasons.join(" / ")}</p>}
               {load.placements.filter((placement) => result.oog_results.get(placement.piece.piece_id)?.oog_flag).map((placement) => {
                 const metrics = oogMetricsFor(placement.piece.piece_id);
                 return <p key={placement.piece.piece_id}><strong>{placement.piece.piece_id}</strong>　OW合計 +{fmt(metrics.owTotalCm, 1)}cm（左 +{fmt(metrics.owLeftCm, 1)} / 右 +{fmt(metrics.owRightCm, 1)}cm）・ OH +{fmt(metrics.ohCm, 1)}cm</p>;
               })}
-              <p>Payload {fmt(kpi?.payload_ratio_pct ?? 0, 1)}% ・ 重心偏差 X/Y {fmt(bias?.offset_x_pct ?? 0, 1)} / {fmt(bias?.offset_y_pct ?? 0, 1)}% ・ 総重量目安 {fmtInt(weight?.gross_weight_kg ?? 0)}kg</p>
+              <p>Payload {fmt(kpi?.payload_ratio_pct ?? 0, 1)}% ・ 重心偏差 X/Y {fmt(bias?.offset_x_pct ?? 0, 1)} / {fmt(bias?.offset_y_pct ?? 0, 1)}%</p>
+              {road?.chassisMessage && <p><strong>{road.chassisMessage}</strong></p>}
             </article>
           );
         })}
@@ -280,7 +364,9 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
       <div className="print-only print-grand-total">
         <strong>全コンテナ・積載済み総計</strong>
         <span>総個数: {loadedTotals.pieces} PCS</span>
-        <span>総重量: {fmtInt(loadedTotals.weight)} kg</span>
+        <span>NET: {fmtInt(loadedTotals.netWeight)} kg</span>
+        <span>Tare: {fmtInt(loadedTotals.tareWeight)} kg</span>
+        <span>Gross: {fmtInt(loadedTotals.grossWeight)} kg</span>
         <span>総容積: {fmt(loadedTotals.m3, 3)} m³</span>
       </div>
 
@@ -291,14 +377,14 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
             <button type="button" className={containerReportView === "packing" ? "active" : ""} onClick={() => setContainerReportView("packing")}>パッキングリスト</button>
           </div>
         </div>
-        <div className={containerReportView === "summary" ? "container-report-summary" : "container-report-summary report-view-hidden"}><div className="table-shell"><table className="data-table result-table"><thead><tr><th>コンテナ</th><th>pcs</th><th>F/T</th><th>M³</th><th>貨物重量</th><th>平均床荷重</th><th>Payload</th><th>容積</th><th>国内陸送・法令確認</th><th>監査</th></tr></thead><tbody>
+        <div className={containerReportView === "summary" ? "container-report-summary" : "container-report-summary report-view-hidden"}><div className="table-shell"><table className="data-table result-table"><thead><tr><th>コンテナ</th><th>pcs</th><th>F/T</th><th>M³</th><th>NET（貨物）</th><th>Tare（風袋）</th><th>Gross（合計）</th><th>平均床荷重</th><th>Payload</th><th>容積</th><th>国内陸送・法令確認</th><th>監査</th></tr></thead><tbody>
           {kpis.map((kpi) => {
             const road = roadAssessments.get(kpi.container_key);
             const requiresReview = kpi.bias_warn || kpi.weight_alert || road?.chassisLevel === "warning" || Boolean(road?.specialPermitMessage);
             const requiresThreeAxle = road?.chassisLevel === "caution";
-            return <tr key={kpi.container_key}><td><strong>{kpi.container_label}</strong></td><td>{kpi.piece_count}</td><td>{fmt(kpi.total_ft, 3)}</td><td>{fmt(kpi.total_m3, 3)}</td><td>{fmtInt(kpi.total_gross_kg)} kg</td><td>{fmtInt(road?.averageFloorLoadKgM2 ?? 0)} kg/m²<small className="cell-note">貨物重量÷内寸床面積</small></td><td>{fmt(kpi.payload_ratio_pct, 1)}%</td><td>{fmt(kpi.volume_ratio_pct, 1)}%</td><td className="transport-check-cell"><strong>{road?.chassisMessage}</strong>{road?.specialPermitMessage && <small>{road.specialPermitMessage}</small>}{road?.escortMessage && <small>{road.escortMessage}</small>}</td><td>{requiresReview && <span className="status-chip red">要確認</span>}{requiresThreeAxle && <span className="status-chip amber">注意：要三軸シャーシ</span>}{!requiresReview && !requiresThreeAxle && <span className="status-chip green">範囲内</span>}</td></tr>;
+            return <tr key={kpi.container_key}><td><strong>{kpi.container_label}</strong></td><td>{kpi.piece_count}</td><td>{fmt(kpi.total_ft, 3)}</td><td>{fmt(kpi.total_m3, 3)}</td><td>{fmtInt(road?.cargoWeightKg ?? kpi.total_gross_kg)} kg</td><td><span className="print-only">{fmtInt(road?.tareWeightKg ?? 0)} kg</span><span className="tare-table-input no-print"><input type="number" min="0" max={MAX_TARE_WEIGHT_KG} step="1" aria-label={`${kpi.container_label}のTare重量`} value={road?.tareWeightKg ?? 0} onChange={(event) => updateTareWeight(kpi.container_key, Number(event.target.value))} /><b>kg</b></span></td><td>{fmtInt(road?.containerGrossKg ?? 0)} kg</td><td>{fmtInt(road?.averageFloorLoadKgM2 ?? 0)} kg/m²<small className="cell-note">貨物重量÷内寸床面積</small></td><td>{fmt(kpi.payload_ratio_pct, 1)}%</td><td>{fmt(kpi.volume_ratio_pct, 1)}%</td><td className="transport-check-cell">{road?.chassisMessage && <strong>{road.chassisMessage}</strong>}{road?.specialPermitMessage && <small>{road.specialPermitMessage}</small>}{road?.escortMessage && <small>{road.escortMessage}</small>}</td><td>{requiresReview && <span className="status-chip red">要確認</span>}{requiresThreeAxle && <span className="status-chip amber">注意：要三軸シャーシ</span>}</td></tr>;
           })}
-        </tbody><tfoot><tr><td><strong>積載済み総計</strong></td><td><strong>{loadedTotals.pieces}</strong></td><td><strong>{fmt(loadedTotals.ft, 3)}</strong></td><td><strong>{fmt(loadedTotals.m3, 3)}</strong></td><td><strong>{fmtInt(loadedTotals.weight)} kg</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr></tfoot></table></div></div>
+        </tbody><tfoot><tr><td><strong>積載済み総計</strong></td><td><strong>{loadedTotals.pieces}</strong></td><td><strong>{fmt(loadedTotals.ft, 3)}</strong></td><td><strong>{fmt(loadedTotals.m3, 3)}</strong></td><td><strong>{fmtInt(loadedTotals.netWeight)} kg</strong></td><td><strong>{fmtInt(loadedTotals.tareWeight)} kg</strong></td><td><strong>{fmtInt(loadedTotals.grossWeight)} kg</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr></tfoot></table></div></div>
         <div className={containerReportView === "packing" ? "packing-list-view" : "packing-list-view report-view-hidden"}>
           <div className="packing-list-tools no-print"><span>コンテナを開くと個別明細を確認できます。</span><button type="button" onClick={() => setExpandedPackingLists(expandedPackingLists.size === packingLists.length ? new Set() : new Set(packingLists.map((list) => list.containerKey)))}>{expandedPackingLists.size === packingLists.length ? "すべて閉じる" : "すべて展開"}</button></div>
           {packingLists.map((list) => {

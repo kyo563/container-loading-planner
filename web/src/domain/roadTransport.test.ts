@@ -14,11 +14,10 @@ const load = (type: "20GP" | "40FR", weight: number): ContainerLoad => {
 };
 
 describe("日本国内陸送の参考判定", () => {
-  it("20ftのコンテナ総重量が20,320kg以下なら2軸範囲内にする", () => {
+  it("20ftのコンテナ総重量が20,320kg以下なら注記を出さない", () => {
     const result = assessJapanRoadTransport(load("20GP", 18_020));
     expect(result.chassisLevel).toBe("ok");
-    expect(result.chassisMessage).toMatch(/2軸シャーシ範囲内/u);
-    expect(result.chassisMessage).not.toMatch(/要確認|要三軸/u);
+    expect(result.chassisMessage).toBeUndefined();
   });
 
   it("20ftのコンテナ総重量が20,320kgを超え24,000kg以下なら3軸注意にする", () => {
@@ -33,6 +32,14 @@ describe("日本国内陸送の参考判定", () => {
     expect(result.chassisLevel).toBe("warning");
     expect(result.chassisMessage).toMatch(/3軸シャーシ上限目安24,000kg超/u);
     expect(result.chassisMessage).toMatch(/輸送方法要確認/u);
+  });
+
+  it("実Tareへ更新するとGrossと3軸要否を再判定する", () => {
+    const result = assessJapanRoadTransport(load("20GP", 18_020), 3_000);
+    expect(result.tareWeightKg).toBe(3_000);
+    expect(result.containerGrossKg).toBe(21_020);
+    expect(result.chassisLevel).toBe("caution");
+    expect(result.chassisMessage).toMatch(/要三軸シャーシ/u);
   });
 
   it("平均床荷重を貨物重量÷コンテナ内寸床面積で算出する", () => {

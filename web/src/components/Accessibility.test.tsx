@@ -15,6 +15,7 @@ describe("主要操作のアクセシビリティ", () => {
     expect(markup).toContain('aria-label="新規プラン"');
     expect(markup).toContain('aria-label="QR読込"');
     expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain("データは端末内で処理");
   });
 
   it("計算モードをラジオ選択として公開する", () => {

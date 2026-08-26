@@ -12,11 +12,12 @@ export type ChassisAssessmentLevel = "ok" | "caution" | "warning";
 
 export interface JapanRoadTransportAssessment {
   cargoWeightKg: number;
+  tareWeightKg: number;
   containerGrossKg: number;
   averageFloorLoadKgM2: number;
   chassisClass: "20" | "40";
   chassisLevel: ChassisAssessmentLevel;
-  chassisMessage: string;
+  chassisMessage?: string;
   specialPermitMessage?: string;
   escortMessage?: string;
   cargoEnvelopeWidthCm: number;
@@ -26,10 +27,13 @@ export interface JapanRoadTransportAssessment {
 const chassisClassFor = (load: ContainerLoad): "20" | "40" =>
   load.spec.type.startsWith("20") || load.spec.inner_L_cm < 800 ? "20" : "40";
 
-export const assessJapanRoadTransport = (load: ContainerLoad): JapanRoadTransportAssessment => {
+export const assessJapanRoadTransport = (
+  load: ContainerLoad,
+  tareWeightKg: number = load.spec.tare_weight_kg,
+): JapanRoadTransportAssessment => {
   const chassisClass = chassisClassFor(load);
   const cargoWeightKg = load.placements.reduce((sum, placement) => sum + placement.piece.weight_kg, 0);
-  const containerGrossKg = cargoWeightKg + load.spec.tare_weight_kg;
+  const containerGrossKg = cargoWeightKg + tareWeightKg;
   const floorAreaM2 = (load.spec.inner_L_cm * load.spec.inner_W_cm) / 10_000;
   const averageFloorLoadKgM2 = floorAreaM2 > 0 ? cargoWeightKg / floorAreaM2 : 0;
   const minY = Math.min(...load.placements.map((placement) => placement.placed_y_cm), 0);
@@ -48,7 +52,7 @@ export const assessJapanRoadTransport = (load: ContainerLoad): JapanRoadTranspor
     ? `3軸シャーシ上限目安${threeAxleLimit.toLocaleString()}kg超（総重量${containerGrossKg.toLocaleString()}kg）・輸送方法要確認`
     : chassisLevel === "caution"
       ? `要三軸シャーシ（総重量${containerGrossKg.toLocaleString()}kg／2軸上限${twoAxleLimit.toLocaleString()}kg超・3軸上限${threeAxleLimit.toLocaleString()}kg以下）`
-      : `2軸シャーシ範囲内（総重量${containerGrossKg.toLocaleString()}kg／上限${twoAxleLimit.toLocaleString()}kg）`;
+      : undefined;
 
   let specialPermitMessage: string | undefined;
   let escortMessage: string | undefined;
@@ -64,5 +68,5 @@ export const assessJapanRoadTransport = (load: ContainerLoad): JapanRoadTranspor
       : "許可経路のC・D条件により誘導車措置の可能性あり";
   }
 
-  return { cargoWeightKg, containerGrossKg, averageFloorLoadKgM2, chassisClass, chassisLevel, chassisMessage, specialPermitMessage, escortMessage, cargoEnvelopeWidthCm, cargoTopHeightCm };
+  return { cargoWeightKg, tareWeightKg, containerGrossKg, averageFloorLoadKgM2, chassisClass, chassisLevel, chassisMessage, specialPermitMessage, escortMessage, cargoEnvelopeWidthCm, cargoTopHeightCm };
 };

@@ -3,7 +3,15 @@ import Papa from "papaparse";
 import { buildContainerKpis, containerLabel, summarizeCounts } from "./reporting";
 import { containerKey } from "./planner";
 import { oogDisplayMetrics } from "./oogDisplay";
+import { assessJapanRoadTransport } from "./roadTransport";
 import type { CargoRow, PlanResult } from "./types";
+
+export type ContainerTareWeights = Readonly<Record<string, number>>;
+
+const tareWeightFor = (result: PlanResult, key: string, tareWeights: ContainerTareWeights): number =>
+  tareWeights[key]
+    ?? result.loads.find((load) => containerKey(load.spec.type, load.index) === key)?.spec.tare_weight_kg
+    ?? 0;
 
 const safeCell = (value: unknown): unknown => {
   if (typeof value !== "string") return value;
@@ -13,11 +21,13 @@ const safeCell = (value: unknown): unknown => {
 const safeRows = (rows: Record<string, unknown>[]): Record<string, unknown>[] =>
   rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, safeCell(value)])));
 
-export const placementRows = (result: PlanResult): Record<string, unknown>[] =>
+export const placementRows = (result: PlanResult, tareWeights: ContainerTareWeights = {}): Record<string, unknown>[] =>
   result.loads.flatMap((load) => {
     const key = containerKey(load.spec.type, load.index);
     const bias = result.bias_by_container.get(key);
     const weight = result.weight_audit_by_container.get(key);
+    const tareWeightKg = tareWeightFor(result, key, tareWeights);
+    const containerGrossWeightKg = (weight?.total_weight_kg ?? 0) + tareWeightKg;
     return load.placements.map((placement, index) => {
       const oog = result.oog_results.get(placement.piece.piece_id);
       const displayOog = oogDisplayMetrics(placement, load.spec, oog);
@@ -58,7 +68,8 @@ export const placementRows = (result: PlanResult): Record<string, unknown>[] =>
         weight_alert: weight?.weight_alert ?? false,
         weight_alert_message: weight?.weight_alert_message ?? "",
         container_total_cargo_kg: weight?.total_weight_kg ?? 0,
-        container_gross_weight_kg: weight?.gross_weight_kg ?? 0,
+        container_tare_weight_kg: tareWeightKg,
+        container_gross_weight_kg: containerGrossWeightKg,
         payload_ratio_pct: weight?.payload_ratio_pct ?? 0,
       };
     });
@@ -75,8 +86,8 @@ const downloadBlob = (blob: Blob, filename: string): void => {
   URL.revokeObjectURL(url);
 };
 
-export const exportPlacementsCsv = async (result: PlanResult): Promise<void> => {
-  const csv = `\uFEFF${Papa.unparse(safeRows(placementRows(result)))}`;
+export const exportPlacementsCsv = async (result: PlanResult, tareWeights: ContainerTareWeights = {}): Promise<void> => {
+  const csv = `\uFEFF${Papa.unparse(safeRows(placementRows(result, tareWeights)))}`;
   downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), "container_loading_plan.csv");
 };
 
@@ -86,7 +97,7 @@ export const exportCargoCsv = async (rows: CargoRow[]): Promise<void> => {
   downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), "cargo_input.csv");
 };
 
-export const exportExcelReport = async (result: PlanResult): Promise<void> => {
+export const exportExcelReport = async (result: PlanResult, tareWeights: ContainerTareWeights = {}): Promise<void> => {
   const { Workbook } = await import("exceljs");
   const workbook = new Workbook();
   const counts = summarizeCounts(result);
@@ -95,20 +106,28 @@ export const exportExcelReport = async (result: PlanResult): Promise<void> => {
     { 区分: "貨物", 種別: "積載済み", 数量: result.placements.length },
     { 区分: "貨物", 種別: "積載不可・要確認", 数量: result.unplaced.length },
   ];
-  const kpis = buildContainerKpis(result).map((kpi) => ({
-    コンテナ: kpi.container_label,
-    種別: kpi.container_type,
-    個数: kpi.piece_count,
-    "F/T": kpi.total_ft,
-    "M3": kpi.total_m3,
-    "貨物重量(kg)": kpi.total_gross_kg,
-    "最大単体重量(kg)": kpi.max_single_gross_kg,
-    "容積使用率(%)": kpi.volume_ratio_pct,
-    "Payload使用率(%)": kpi.payload_ratio_pct,
-    偏荷重警告: kpi.bias_warn ? "要確認" : "なし",
-    重量警告: kpi.weight_alert ? "要確認" : "なし",
-  }));
-  const placements = safeRows(placementRows(result));
+  const kpis = buildContainerKpis(result).map((kpi) => {
+    const load = result.loads.find((candidate) => containerKey(candidate.spec.type, candidate.index) === kpi.container_key);
+    const tareWeightKg = tareWeightFor(result, kpi.container_key, tareWeights);
+    const road = load ? assessJapanRoadTransport(load, tareWeightKg) : undefined;
+    return {
+      コンテナ: kpi.container_label,
+      種別: kpi.container_type,
+      個数: kpi.piece_count,
+      "F/T": kpi.total_ft,
+      "M3": kpi.total_m3,
+      "NET・貨物重量(kg)": kpi.total_gross_kg,
+      "Tare・風袋重量(kg)": tareWeightKg,
+      "Gross・合計コンテナ重量(kg)": kpi.total_gross_kg + tareWeightKg,
+      "最大単体重量(kg)": kpi.max_single_gross_kg,
+      "容積使用率(%)": kpi.volume_ratio_pct,
+      "Payload使用率(%)": kpi.payload_ratio_pct,
+      シャーシ注記: road?.chassisMessage ?? "",
+      偏荷重警告: kpi.bias_warn ? "要確認" : "なし",
+      重量警告: kpi.weight_alert ? "要確認" : "なし",
+    };
+  });
+  const placements = safeRows(placementRows(result, tareWeights));
   const loadingPlan = result.loads.flatMap((load) =>
     load.placements.map((placement, index) => {
       const oog = result.oog_results.get(placement.piece.piece_id);
