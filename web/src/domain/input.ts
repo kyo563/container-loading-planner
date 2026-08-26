@@ -5,6 +5,7 @@ import type { CargoRow, Piece, ValidationIssue } from "./types";
 import { ceilCm, ceilM3 } from "./rounding";
 
 const REQUIRED_FIELDS: (keyof CargoRow)[] = ["id", "desc", "qty", "L_cm", "W_cm", "H_cm", "weight_kg"];
+const CARGO_MEASUREMENT_FIELDS: (keyof CargoRow)[] = ["L_cm", "W_cm", "H_cm", "weight_kg"];
 
 const COLUMN_ALIASES: Record<string, keyof CargoRow> = {
   id: "id",
@@ -88,7 +89,8 @@ export const recordsToCargoRows = (records: Record<string, unknown>[]): CargoRow
         if (field) normalized[field] = value;
       }
 
-      if (!Object.values(normalized).some((value) => asText(value) !== "")) return null;
+      const hasCargoMeasurements = CARGO_MEASUREMENT_FIELDS.some((field) => asText(normalized[field]) !== "");
+      if (!hasCargoMeasurements) return null;
 
       const maxStackRaw = normalized.max_stack_load_kg;
       const maxStack = asText(maxStackRaw) === "" ? null : asNumber(maxStackRaw, Number.NaN);
