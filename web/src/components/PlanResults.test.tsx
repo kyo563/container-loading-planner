@@ -48,8 +48,9 @@ describe("PlanResults", () => {
   });
 
   it("コンテナ情報の入力欄と印刷用の11マスを表示する", () => {
+    const result = estimatePlan(expandPieces([cargo(220)]), DEFAULT_CONTAINERS, DEFAULT_SETTINGS);
     const markup = renderToStaticMarkup(
-      <PlanResults result={estimatePlan(expandPieces([cargo(220)]), DEFAULT_CONTAINERS, DEFAULT_SETTINGS)} />,
+      <PlanResults result={result} />,
     );
 
     expect(markup).toContain("コンテナ情報メモ");
@@ -57,6 +58,28 @@ describe("PlanResults", () => {
     expect(markup).toContain("のSeal番号");
     expect(markup).toContain("CONTAINER NO.");
     expect(markup).toContain("SEAL NO.");
-    expect(markup.match(/class="print-container-number-box"/gu)).toHaveLength(11);
+    expect(markup.match(/class="print-container-number-box"/gu)).toHaveLength(result.loads.length * 11);
+  });
+
+  it("印刷物をCLP、パッキングリスト、QRの順に構成し、占有率を掲載しない", () => {
+    const markup = renderToStaticMarkup(
+      <PlanResults result={estimatePlan(expandPieces([cargo(220)]), DEFAULT_CONTAINERS, DEFAULT_SETTINGS)} />,
+    );
+    const printStart = markup.indexOf('<div class="print-document print-only">');
+    const screenStart = markup.indexOf('<div class="results-heading">', printStart);
+    const printMarkup = markup.slice(printStart, screenStart);
+
+    expect(printStart).toBeGreaterThanOrEqual(0);
+    expect(screenStart).toBeGreaterThan(printStart);
+    expect(printMarkup.indexOf('class="print-clp-pages"')).toBeLessThan(printMarkup.indexOf('class="print-packing-pages"'));
+    expect(printMarkup.indexOf('class="print-packing-pages"')).toBeLessThan(printMarkup.indexOf('class="print-qr-page"'));
+    expect(printMarkup).toContain("CONTAINER LOADING PLAN");
+    expect(printMarkup).toContain("コンテナサイズ");
+    expect(printMarkup).toContain("NET");
+    expect(printMarkup).toContain("Tare");
+    expect(printMarkup).toContain("M³");
+    expect(printMarkup).not.toContain("推奨コンテナ構成");
+    expect(printMarkup).not.toContain("Payload");
+    expect(printMarkup).not.toContain("容積（参考）");
   });
 });

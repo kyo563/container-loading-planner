@@ -197,16 +197,76 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
 
   return (
     <section className={printResultClassName} id="plan-results">
-      <div className="print-report-header print-only">
-        <div><h1>Container Loading Plan</h1><p>LoadPilot / {new Date().toLocaleString("ja-JP")}</p><small className="print-qr-instruction">{printQrInstruction}</small></div>
-        <div className="print-qr-group">
-          {printQrParts.map((part) => {
-            const label = part.kind === "plan" ? "プラン" : "特殊仕様";
-            const caption = part.partTotal > 1 ? `${label} ${part.partIndex}/${part.partTotal}` : label;
-            return <figure key={`${part.kind}-${part.partIndex}`}><img src={part.dataUrl} alt={`${caption}復元用QRコード`} /><figcaption>{caption}</figcaption></figure>;
+      <div className="print-document print-only">
+        <div className="print-clp-pages">
+          {result.loads.map((load, index) => {
+            const key = containerKey(load.spec.type, load.index);
+            const kpi = kpis.find((item) => item.container_key === key);
+            const road = roadAssessments.get(key);
+            const memo = containerInfo[key] ?? EMPTY_CONTAINER_INFO;
+            return (
+              <article className="print-clp-page" key={key}>
+                <header className="print-page-heading">
+                  <div><span>CONTAINER LOADING PLAN</span><h1>CLP</h1></div>
+                  <div className="print-page-identity"><strong>{containerLabel(load)}</strong><small>{index + 1} / {result.loads.length}</small></div>
+                </header>
+                <div className="print-clp-layout"><ContainerLayout load={load} oogResults={result.oog_results} /></div>
+                <div className="print-clp-metrics">
+                  <div className="print-container-size"><span>コンテナサイズ</span><strong>{load.spec.type}</strong><small>内寸 L {fmtInt(load.spec.inner_L_cm)} × W {fmtInt(load.spec.inner_W_cm)} × H {fmtInt(load.spec.inner_H_cm)} cm</small></div>
+                  <div><span>個数</span><strong>{load.placements.length}<small> PCS</small></strong></div>
+                  <div><span>NET</span><strong>{fmtInt(road?.cargoWeightKg ?? kpi?.total_gross_kg ?? 0)}<small> kg</small></strong></div>
+                  <div><span>Tare</span><strong>{fmtInt(road?.tareWeightKg ?? load.spec.tare_weight_kg)}<small> kg</small></strong></div>
+                  <div><span>M³</span><strong>{fmt(kpi?.total_m3 ?? 0, 3)}<small> m³</small></strong></div>
+                </div>
+                <PrintContainerInfo memo={memo} />
+              </article>
+            );
           })}
         </div>
-        {printQrError && <span className="print-qr-error">データ量超過のためQRを掲載できません</span>}
+
+        <div className="print-packing-pages">
+          {packingLists.map((list, index) => {
+            const road = roadAssessments.get(list.containerKey);
+            return (
+              <article className="print-packing-page" key={list.containerKey}>
+                <header className="print-page-heading compact">
+                  <div><span>CONTAINER PACKING LIST</span><h2>{list.containerLabel}</h2></div>
+                  <div className="print-page-identity"><strong>{list.pieceCount} PCS</strong><small>{index + 1} / {packingLists.length}</small></div>
+                </header>
+                <div className="print-packing-summary">
+                  <span>NET <strong>{fmtInt(road?.cargoWeightKg ?? list.totalWeightKg)} kg</strong></span>
+                  <span>Tare <strong>{fmtInt(road?.tareWeightKg ?? 0)} kg</strong></span>
+                  <span>M³ <strong>{fmt(list.totalM3, 3)} m³</strong></span>
+                </div>
+                <table className="print-packing-table">
+                  <thead><tr><th>配置No.</th><th>貨物ID</th><th>品名</th><th>荷姿</th><th>寸法 L × W × H (cm)</th><th>GW (kg)</th><th>M³</th><th>積付け</th></tr></thead>
+                  <tbody>
+                    {list.items.map((item) => (
+                      <tr key={item.piece.piece_id}>
+                        <td>{item.position}</td><td><strong>{item.piece.piece_id}</strong></td><td>{item.piece.desc}</td><td>{item.piece.package_text || "—"}</td>
+                        <td>{fmtInt(item.piece.L_cm)} × {fmtInt(item.piece.W_cm)} × {fmtInt(item.piece.H_cm)}</td><td>{fmtInt(item.piece.weight_kg)}</td><td>{fmt(item.piece.m3, 3)}</td><td>{item.placedZCm > 0 ? `段積み（床上 ${fmtInt(item.placedZCm)}cm）` : "床置き"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot><tr><td colSpan={4}><strong>{list.containerLabel} 合計</strong></td><td><strong>{list.pieceCount} PCS</strong></td><td><strong>{fmtInt(list.totalWeightKg)} kg</strong></td><td><strong>{fmt(list.totalM3, 3)}</strong></td><td>—</td></tr></tfoot>
+                </table>
+              </article>
+            );
+          })}
+        </div>
+
+        <section className="print-qr-page">
+          <header className="print-page-heading compact"><div><span>PLAN DATA</span><h2>QRコード</h2></div></header>
+          <p className="print-qr-instruction">{printQrInstruction}</p>
+          <div className="print-qr-group">
+            {printQrParts.map((part) => {
+              const label = part.kind === "plan" ? "プラン" : "特殊仕様";
+              const caption = part.partTotal > 1 ? `${label} ${part.partIndex}/${part.partTotal}` : label;
+              return <figure key={`${part.kind}-${part.partIndex}`}><img src={part.dataUrl} alt={`${caption}復元用QRコード`} /><figcaption>{caption}</figcaption></figure>;
+            })}
+          </div>
+          {printQrError && <span className="print-qr-error">データ量超過のためQRを掲載できません</span>}
+        </section>
       </div>
       <div className="results-heading">
         <div>
@@ -336,40 +396,6 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
         </div>
       )}
 
-      <div className="print-only print-all-layouts">
-        {result.loads.map((load) => {
-          const key = containerKey(load.spec.type, load.index);
-          const kpi = kpis.find((item) => item.container_key === key);
-          const bias = result.bias_by_container.get(key);
-          const road = roadAssessments.get(key);
-          const memo = containerInfo[key] ?? EMPTY_CONTAINER_INFO;
-          const substitution = result.substitution_by_container.get(key);
-          return (
-            <article key={key} className="print-layout-card">
-              <div><h3>{containerLabel(load)}</h3><p>総個数: {load.placements.length} PCS　/　NET: {fmtInt(road?.cargoWeightKg ?? 0)} kg　/　Tare: {fmtInt(road?.tareWeightKg ?? 0)} kg　/　Gross: {fmtInt(road?.containerGrossKg ?? 0)} kg　/　総容積: {fmt(kpi?.total_m3 ?? 0, 3)} m³</p></div>
-              <PrintContainerInfo memo={memo} />
-              <ContainerLayout load={load} oogResults={result.oog_results} />
-              {substitution && <p><strong>40GP代用：{substitution.feasible ? "可能" : "不可"}</strong>　{substitution.reasons.join(" / ")}</p>}
-              {load.placements.filter((placement) => result.oog_results.get(placement.piece.piece_id)?.oog_flag).map((placement) => {
-                const metrics = oogMetricsFor(placement.piece.piece_id);
-                return <p key={placement.piece.piece_id}><strong>{placement.piece.piece_id}</strong>　OW合計 +{fmt(metrics.owTotalCm, 1)}cm（左 +{fmt(metrics.owLeftCm, 1)} / 右 +{fmt(metrics.owRightCm, 1)}cm）・ OH +{fmt(metrics.ohCm, 1)}cm</p>;
-              })}
-              <p>Payload {fmt(kpi?.payload_ratio_pct ?? 0, 1)}% ・ 重心偏差 X/Y {fmt(bias?.offset_x_pct ?? 0, 1)} / {fmt(bias?.offset_y_pct ?? 0, 1)}%</p>
-              {road?.chassisMessage && <p><strong>{road.chassisMessage}</strong></p>}
-            </article>
-          );
-        })}
-      </div>
-
-      <div className="print-only print-grand-total">
-        <strong>全コンテナ・積載済み総計</strong>
-        <span>総個数: {loadedTotals.pieces} PCS</span>
-        <span>NET: {fmtInt(loadedTotals.netWeight)} kg</span>
-        <span>Tare: {fmtInt(loadedTotals.tareWeight)} kg</span>
-        <span>Gross: {fmtInt(loadedTotals.grossWeight)} kg</span>
-        <span>総容積: {fmt(loadedTotals.m3, 3)} m³</span>
-      </div>
-
       <div className="result-table-section">
         <div className="section-title-row"><div><span className="eyebrow">CONTAINER REPORT</span><h3>コンテナ別集計・パッキングリスト</h3></div>
           <div className="report-view-switch no-print" role="group" aria-label="コンテナ帳票の表示切替">
@@ -461,6 +487,7 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
                 <span><strong>カラーで印刷する</strong><small>オフの場合はモノクロで印刷します（既定）。</small></span>
               </label>
             </div>
+            <p className="print-browser-note">ブラウザーの印刷設定で「ヘッダーとフッター」をオフにすると、日時やURLを除いた帳票だけを印刷できます。</p>
             <div className="modal-actions">
               <button className="button ghost" type="button" onClick={() => setPrintOptionsOpen(false)}>キャンセル</button>
               <button className="button primary" type="button" onClick={openPrintPreview}><Printer size={16} />印刷画面を開く</button>
