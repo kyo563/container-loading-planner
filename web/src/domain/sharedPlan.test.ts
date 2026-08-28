@@ -4,7 +4,7 @@ import { strToU8, zlibSync } from "fflate";
 
 import { STANDARD_CONTAINER_PROFILE_ID } from "./containerProfiles";
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS, SAMPLE_CARGO } from "./constants";
-import { buildSharedQrBundle, decodeSharedPlan, encodeSharedPlan, SupplementalQrRequiredError, tokenFromHash, tokenFromScannedValue } from "./sharedPlan";
+import { buildSharedQrBundle, buildSharedRestorationUrl, decodeSharedPlan, encodeSharedPlan, specsTokenFromHash, SupplementalQrRequiredError, tokenFromHash, tokenFromScannedValue } from "./sharedPlan";
 
 const state = {
   rows: SAMPLE_CARGO,
@@ -108,6 +108,18 @@ describe("sharedPlan", () => {
     expect(bundle.specsToken!.length).toBeLessThan(JSON.stringify(customSpecs).length);
     await expect(decodeSharedPlan(bundle.planToken)).rejects.toBeInstanceOf(SupplementalQrRequiredError);
     expect((await decodeSharedPlan(bundle.planToken, bundle.specsToken)).specs).toEqual(customSpecs);
+  });
+
+  it("Excel向け復元URLは標準外仕様も1リンクで復元できる", async () => {
+    const customSpecs = DEFAULT_CONTAINERS.map((spec) => spec.type === "40HC" ? { ...spec, inner_H_cm: 275 } : { ...spec });
+    const url = await buildSharedRestorationUrl({ ...state, specs: customSpecs }, "https://example.com/app/");
+    const hash = new URL(url).hash;
+    const planToken = tokenFromHash(hash);
+    const specsToken = specsTokenFromHash(hash);
+
+    expect(planToken).toBeTruthy();
+    expect(specsToken).toBeTruthy();
+    expect((await decodeSharedPlan(planToken!, specsToken!)).specs).toEqual(customSpecs);
   });
 
   it("SOCコンテナは標準定義との差分だけを追加QRへ保存して復元する", async () => {

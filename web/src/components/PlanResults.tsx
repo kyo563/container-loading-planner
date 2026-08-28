@@ -1,14 +1,14 @@
 import { AlertCircle, AlertTriangle, Check, ChevronDown, ChevronRight, Download, FileSpreadsheet, Printer, Scale, Ship, Weight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { exportExcelReport, exportPlacementsCsv, printPlan } from "../domain/export";
+import { exportExcelReport, exportPlacementsCsv, printPlan, type ContainerExportInfo } from "../domain/export";
 import { oogDisplayMetrics } from "../domain/oogDisplay";
 import { createPlanQrBundleData, PRINT_QR_PX, type PlanQrData } from "../domain/planQr";
 import { containerKey } from "../domain/planner";
 import { assessJapanRoadTransport } from "../domain/roadTransport";
 import { buildContainerKpis, buildContainerPackingLists, containerLabel, summarizeCounts } from "../domain/reporting";
 import { fmt, fmtInt } from "../domain/rounding";
-import type { ShareablePlanState } from "../domain/sharedPlan";
+import { buildSharedRestorationUrl, type ShareablePlanState } from "../domain/sharedPlan";
 import type { PlanResult } from "../domain/types";
 import { ContainerLayout } from "./ContainerLayout";
 import { PlanShare } from "./PlanShare";
@@ -22,18 +22,13 @@ const MAX_TARE_WEIGHT_KG = 100_000;
 const CONTAINER_NUMBER_LENGTH = 11;
 const MAX_SEAL_NUMBER_LENGTH = 40;
 
-interface ContainerInfoMemo {
-  containerNumber: string;
-  sealNumber: string;
-}
-
-const EMPTY_CONTAINER_INFO: ContainerInfoMemo = { containerNumber: "", sealNumber: "" };
+const EMPTY_CONTAINER_INFO: ContainerExportInfo = { containerNumber: "", sealNumber: "" };
 
 const initialTareWeights = (result: PlanResult): Record<string, number> => Object.fromEntries(
   result.loads.map((load) => [containerKey(load.spec.type, load.index), load.spec.tare_weight_kg]),
 );
 
-const initialContainerInfo = (result: PlanResult): Record<string, ContainerInfoMemo> => Object.fromEntries(
+const initialContainerInfo = (result: PlanResult): Record<string, ContainerExportInfo> => Object.fromEntries(
   result.loads.map((load) => [containerKey(load.spec.type, load.index), { ...EMPTY_CONTAINER_INFO }]),
 );
 
@@ -42,7 +37,7 @@ const normalizeContainerNumber = (value: string): string => value
   .replace(/[^A-Z0-9]/gu, "")
   .slice(0, CONTAINER_NUMBER_LENGTH);
 
-function PrintContainerInfo({ memo }: { memo: ContainerInfoMemo }) {
+function PrintContainerInfo({ memo }: { memo: ContainerExportInfo }) {
   const containerNumberCharacters = Array.from({ length: CONTAINER_NUMBER_LENGTH }, (_, index) => memo.containerNumber[index] ?? "");
   return (
     <div className="print-container-info">
@@ -66,7 +61,7 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
   const counts = useMemo(() => summarizeCounts(result), [result]);
   const [selectedKey, setSelectedKey] = useState(() => result.loads[0] ? containerKey(result.loads[0].spec.type, result.loads[0].index) : "");
   const [tareWeights, setTareWeights] = useState<Record<string, number>>(() => initialTareWeights(result));
-  const [containerInfo, setContainerInfo] = useState<Record<string, ContainerInfoMemo>>(() => initialContainerInfo(result));
+  const [containerInfo, setContainerInfo] = useState<Record<string, ContainerExportInfo>>(() => initialContainerInfo(result));
   const roadAssessments = useMemo(() => new Map(result.loads.map((load) => {
     const key = containerKey(load.spec.type, load.index);
     return [key, assessJapanRoadTransport(load, tareWeights[key] ?? load.spec.tare_weight_kg)];
@@ -125,7 +120,7 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
     ...current,
     [key]: Math.min(MAX_TARE_WEIGHT_KG, Math.max(0, Number.isFinite(value) ? value : 0)),
   }));
-  const updateContainerInfo = (key: string, field: keyof ContainerInfoMemo, value: string) => setContainerInfo((current) => ({
+  const updateContainerInfo = (key: string, field: keyof ContainerExportInfo, value: string) => setContainerInfo((current) => ({
     ...current,
     [key]: { ...(current[key] ?? EMPTY_CONTAINER_INFO), [field]: value },
   }));
@@ -162,6 +157,10 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
     window.setTimeout(() => {
       void runExport(printPlan);
     }, 0);
+  };
+  const exportExcel = async (): Promise<void> => {
+    const restorationUrl = sharePlan ? await buildSharedRestorationUrl(sharePlan) : "";
+    await exportExcelReport(result, tareWeights, containerInfo, restorationUrl);
   };
   const loadedTotals = useMemo(() => kpis.reduce((totals, kpi) => {
     const road = roadAssessments.get(kpi.container_key);
@@ -277,7 +276,7 @@ export function PlanResults({ result, sharePlan }: PlanResultsProps) {
         <div className="result-actions no-print">
           {sharePlan && <PlanShare plan={sharePlan} />}
           <button className="button secondary" onClick={() => void runExport(() => exportPlacementsCsv(result, tareWeights))}><Download size={16} />CSV</button>
-          <button className="button secondary" onClick={() => void runExport(() => exportExcelReport(result, tareWeights))}><FileSpreadsheet size={16} />Excel帳票</button>
+          <button className="button secondary" onClick={() => void runExport(exportExcel)}><FileSpreadsheet size={16} />Excel帳票</button>
           <button className="button secondary" onClick={() => setPrintOptionsOpen(true)}><Printer size={16} />印刷 / PDF</button>
         </div>
       </div>

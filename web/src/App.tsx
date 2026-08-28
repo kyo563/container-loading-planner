@@ -302,9 +302,13 @@ export default function App() {
   useEffect(() => {
     if (restoreStarted.current) return;
     restoreStarted.current = true;
-    const token = tokenFromHash(window.location.hash) ?? specsTokenFromHash(window.location.hash);
-    if (!token) return;
-    void consumeSharedQr(token).then((outcome) => {
+    const planToken = tokenFromHash(window.location.hash);
+    const specsToken = specsTokenFromHash(window.location.hash);
+    if (!planToken && !specsToken) return;
+    const restore = planToken && specsToken
+      ? applySharedPlan(planToken, specsToken).then((): { complete: boolean; message?: string } => ({ complete: true }))
+      : consumeSharedQr(planToken ?? specsToken!);
+    void restore.then((outcome) => {
       if (!outcome.complete) {
         setRestoreMessage(outcome.message ?? "もう1枚のQRコードを読み取ってください。");
         setScannerOpen(true);
@@ -313,7 +317,7 @@ export default function App() {
       setRestoreMessage("");
       setRestoreError(caught instanceof Error ? caught.message : "共有プランを読み込めませんでした。");
     });
-  }, [consumeSharedQr]);
+  }, [applySharedPlan, consumeSharedQr]);
 
   return (
     <div className="app">

@@ -569,6 +569,16 @@ export const buildSharedQrBundle = async (state: ShareablePlanState, baseUrl?: s
 export const buildSharedPlanUrl = async (state: ShareablePlanState, baseUrl = window.location.href.split("#")[0]): Promise<string> =>
   (await buildSharedQrBundle(state, baseUrl)).planUrl;
 
+export const buildSharedRestorationUrl = async (
+  state: ShareablePlanState,
+  baseUrl = window.location.href.split("#")[0],
+): Promise<string> => {
+  const bundle = await buildSharedQrBundle(state, baseUrl);
+  if (!bundle.specsToken) return bundle.planUrl;
+  const params = new URLSearchParams({ plan: bundle.planToken, spec: bundle.specsToken });
+  return `${baseUrl}#${params.toString()}`;
+};
+
 export const tokenFromHash = (hash: string): string | null => {
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
   return params.get("plan");
